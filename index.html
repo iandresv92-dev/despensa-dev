@@ -751,14 +751,17 @@ function renderCategories(){
 }
 
 // ---------- Sheets ----------
-function renderSheetWrapper(title, innerHtml, extraClass){
+function renderSheetWrapper(title, innerHtml, extraClass, headerExtra){
   return `
     <div class="overlay" id="sheet-overlay">
       <div class="sheet ${extraClass||''}">
         <div class="sheet-handle"></div>
         <div class="row-between">
           <h2 class="sheet-title">${title}</h2>
-          <button class="icon-btn" id="sheet-close">✕</button>
+          <div style="display:flex; gap:6px;">
+            ${headerExtra||''}
+            <button class="icon-btn" id="sheet-close">✕</button>
+          </div>
         </div>
         ${innerHtml}
       </div>
@@ -847,13 +850,18 @@ function renderProductDetailSheet(){
   const categories = state.data.categories;
   const cat = categories.find(c => c.id === product.categoryId);
   const loc = LOCATIONS.find(l => l.id === product.locationId);
+  const mode = state.detailMode || 'view';
+
+  // ---- Modo editar datos básicos (nombre/categoría/lugar/unidad) — común a ambos tipos ----
+  if(mode === 'editInfo'){
+    return renderEditInfoSheet(product);
+  }
 
   // ---- Productos SIN vencimiento: vista simplificada de solo cantidad ----
   if(product.tracksExpiry === false){
     return renderNoExpiryDetailSheet(product, cat, loc);
   }
 
-  const mode = state.detailMode || 'view';
   const activeLots = (product.lots||[]).filter(l => l.qty > 0).sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
   const total = activeLots.reduce((s,l)=>s+l.qty,0);
 
@@ -967,7 +975,7 @@ function renderProductDetailSheet(){
       <button class="btn btn-primary" style="flex:1;" id="pd-consume" ${total===0?'disabled':''}>➖ Descontar</button>
     </div>
     <button class="btn btn-danger-soft btn-block" style="margin-top:10px;" id="pd-delete">Eliminar producto</button>
-  `);
+  `, '', `<button class="icon-btn" id="pd-edit-info" title="Editar nombre, categoría o lugar">✏️</button>`);
 }
 
 // ---- Vista de detalle para productos SIN vencimiento (solo cantidad) ----
@@ -1007,6 +1015,40 @@ function renderNoExpiryDetailSheet(product, cat, loc){
     ` : ''}
 
     <button class="btn btn-danger-soft btn-block" style="margin-top:16px;" id="pd-delete">Eliminar producto</button>
+  `, '', `<button class="icon-btn" id="pd-edit-info" title="Editar nombre, categoría o lugar">✏️</button>`);
+}
+
+// ---- Editar datos básicos de un producto ya creado (nombre, categoría, lugar, unidad) ----
+function renderEditInfoSheet(product){
+  const categories = state.data.categories;
+  const draft = state.editDraft || {
+    name: product.name, categoryId: product.categoryId, locationId: product.locationId, unit: product.unit || 'un.',
+  };
+  state.editDraft = draft;
+
+  return renderSheetWrapper('Editar producto', `
+    <div class="field">
+      <label>Nombre del producto</label>
+      <input id="ei-name" value="${esc(draft.name)}" autofocus />
+    </div>
+    <div class="field">
+      <label>Categoría</label>
+      <div class="seg">
+        ${categories.map(c => `<button type="button" class="seg-btn ${draft.categoryId===c.id?'active':''}" data-ei-cat="${c.id}">${c.emoji} ${esc(c.name)}</button>`).join('')}
+      </div>
+    </div>
+    <div class="field">
+      <label>Lugar</label>
+      <div class="seg">
+        ${LOCATIONS.map(l => `<button type="button" class="seg-btn ${draft.locationId===l.id?'active':''}" data-ei-loc="${l.id}">${l.emoji} ${l.label}</button>`).join('')}
+      </div>
+    </div>
+    <div class="field">
+      <label>Unidad</label>
+      <input id="ei-unit" placeholder="un. / kg / L" value="${esc(draft.unit)}" />
+    </div>
+    <button class="btn btn-primary btn-block" id="ei-save">Guardar cambios</button>
+    <button class="btn btn-soft btn-block" style="margin-top:10px;" id="ei-cancel">Cancelar</button>
   `);
 }
 
@@ -1241,6 +1283,45 @@ function attachEvents(){
       showToast('Producto eliminado');
     }
   });
+  const pdEditInfo = document.getElementById('pd-edit-info');
+  if(pdEditInfo) pdEditInfo.addEventListener('click', () => {
+    state.editDraft = null;
+    state.detailMode = 'editInfo';
+    render();
+  });
+
+  // ---- Editar datos básicos de producto ----
+  const eiName = document.getElementById('ei-name');
+  if(eiName){
+    eiName.addEventListener('input', (e) => { state.editDraft.name = e.target.value; });
+    root.querySelectorAll('[data-ei-cat]').forEach(el => el.addEventListener('click', () => { state.editDraft.categoryId = el.dataset.eiCat; render(); }));
+    root.querySelectorAll('[data-ei-loc]').forEach(el => el.addEventListener('click', () => { state.editDraft.locationId = el.dataset.eiLoc; render(); }));
+    const eiUnit = document.getElementById('ei-unit');
+    if(eiUnit) eiUnit.addEventListener('input', (e) => { state.editDraft.unit = e.target.value; });
+
+    const eiCancel = document.getElementById('ei-cancel');
+    if(eiCancel) eiCancel.addEventListener('click', () => {
+      state.editDraft = null;
+      state.detailMode = 'view';
+      render();
+    });
+
+    const eiSave = document.getElementById('ei-save');
+    if(eiSave) eiSave.addEventListener('click', () => {
+      const d = state.editDraft;
+      if(!d.name.trim()){ showToast('Ponle un nombre al producto ⚠️'); return; }
+      const productId = state.sheet.payload.id;
+      updateProduct(productId, {
+        name: d.name.trim(), categoryId: d.categoryId, locationId: d.locationId, unit: d.unit.trim()||'un.',
+      });
+      state.editDraft = null;
+      state.detailMode = 'view';
+      const product = state.data.products.find(p => p.id === productId);
+      state.sheet = { type:'productDetail', payload: product };
+      render();
+      showToast('Producto actualizado ✅');
+    });
+  }
 
   // ---- Product detail sheet: producto SIN vencimiento ----
   const neQty = document.getElementById('ne-qty');
@@ -1366,6 +1447,7 @@ function closeSheet(){
   state.productDraft = null;
   state.categoryDraft = null;
   state.lotDraft = null;
+  state.editDraft = null;
   render();
 }
 
