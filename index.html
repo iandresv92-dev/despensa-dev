@@ -6,9 +6,6 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="translucent-black" />
 <title>Despensa</title>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
   :root{
     --bg: #F2F1F7;
@@ -308,8 +305,8 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
-const { useState, useEffect, useMemo, useRef } = React;
+<script>
+'use strict';
 
 // ---------- Helpers ----------
 const STORAGE_KEY = 'despensa_v1';
@@ -325,6 +322,7 @@ const fmtDate = (dateStr) => {
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('es-CL', { day:'2-digit', month:'short' });
 };
+const esc = (str) => String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const LOCATIONS = [
   { id:'despensa', label:'Despensa', emoji:'🗄️' },
@@ -353,17 +351,12 @@ function loadData(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if(raw) return JSON.parse(raw);
   }catch(e){}
-  return {
-    products: [],
-    categories: DEFAULT_CATEGORIES,
-    consumption: [],
-  };
+  return { products: [], categories: DEFAULT_CATEGORIES, consumption: [] };
 }
 function saveData(data){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){}
 }
 
-// Status of a lot based on its expiry + product's alert window
 function lotStatus(lot, alertDays){
   const d = daysBetween(lot.expiry);
   if(d < 0) return 'expired';
@@ -373,281 +366,211 @@ function lotStatus(lot, alertDays){
 const STATUS_COLOR = { ok:'mint', warning:'peach', expired:'coral' };
 const STATUS_LABEL = { ok:'Vigente', warning:'Por vencer', expired:'Vencido' };
 
-// ---------- Toast ----------
-function useToast(){
-  const [toast, setToast] = useState(null);
-  const show = (msg) => {
-    setToast(msg);
-    clearTimeout(show._t);
-    show._t = setTimeout(() => setToast(null), 2200);
-  };
-  return [toast, show];
+// ---------- Global state ----------
+let state = {
+  data: loadData(),
+  tab: 'home',
+  sheet: null, // {type, payload}
+  toastMsg: null,
+  toastTimer: null,
+  inventoryFilters: { query:'', cat:'all', loc:'all', status:'all' },
+  reportPeriod: 30,
+  consumeDraft: { lotId: null, amount: 1 },
+};
+
+function setState(patch){
+  Object.assign(state, patch);
+  render();
+}
+function setData(updater){
+  state.data = typeof updater === 'function' ? updater(state.data) : updater;
+  saveData(state.data);
+  render();
+}
+function showToast(msg){
+  clearTimeout(state.toastTimer);
+  state.toastMsg = msg;
+  render();
+  state.toastTimer = setTimeout(() => { state.toastMsg = null; render(); }, 2200);
 }
 
-// ---------- Main App ----------
-function App(){
-  const [data, setData] = useState(loadData());
-  const [tab, setTab] = useState('home');
-  const [toast, showToast] = useToast();
-  const [sheet, setSheet] = useState(null); // {type, payload}
-  const fileInputRef = useRef(null);
-
-  useEffect(() => { saveData(data); }, [data]);
-
-  const products = data.products;
-  const categories = data.categories;
-
-  // derived: all active lots flattened with product info
-  const allLots = useMemo(() => {
-    const out = [];
-    products.forEach(p => {
-      (p.lots || []).forEach(l => {
-        if(l.qty > 0){
-          out.push({ ...l, product: p, status: lotStatus(l, p.alertDays ?? 3) });
-        }
-      });
+// ---------- CRUD ----------
+function addProduct(prod){
+  setData(d => ({ ...d, products: [...d.products, prod] }));
+}
+function updateProduct(id, patch){
+  setData(d => ({ ...d, products: d.products.map(p => p.id === id ? { ...p, ...patch } : p) }));
+}
+function deleteProduct(id){
+  setData(d => ({ ...d, products: d.products.filter(p => p.id !== id) }));
+}
+function addLot(productId, lot){
+  setData(d => ({
+    ...d,
+    products: d.products.map(p => p.id === productId ? { ...p, lots: [...(p.lots||[]), lot] } : p)
+  }));
+}
+function consumeLot(productId, lotId, amount){
+  setData(d => {
+    const products = d.products.map(p => {
+      if(p.id !== productId) return p;
+      const lots = p.lots.map(l => l.id === lotId ? { ...l, qty: Math.max(0, l.qty - amount) } : l);
+      return { ...p, lots };
     });
-    return out;
-  }, [products]);
-
-  const warningLots = allLots.filter(l => l.status === 'warning').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
-  const expiredLots = allLots.filter(l => l.status === 'expired').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
-  const okCount = allLots.filter(l => l.status === 'ok').length;
-
-  // ---- CRUD operations ----
-  function addProduct(prod){
-    setData(d => ({ ...d, products: [...d.products, prod] }));
-  }
-  function updateProduct(id, patch){
-    setData(d => ({ ...d, products: d.products.map(p => p.id === id ? { ...p, ...patch } : p) }));
-  }
-  function deleteProduct(id){
-    setData(d => ({ ...d, products: d.products.filter(p => p.id !== id) }));
-  }
-  function addLot(productId, lot){
-    setData(d => ({
-      ...d,
-      products: d.products.map(p => p.id === productId ? { ...p, lots: [...(p.lots||[]), lot] } : p)
-    }));
-  }
-  function consumeLot(productId, lotId, amount){
-    setData(d => {
-      const products = d.products.map(p => {
-        if(p.id !== productId) return p;
-        const lots = p.lots.map(l => l.id === lotId ? { ...l, qty: Math.max(0, l.qty - amount) } : l);
-        return { ...p, lots };
-      });
-      const product = products.find(p => p.id === productId);
-      const lot = product.lots.find(l => l.id === lotId);
-      const record = {
-        id: uid(),
-        productId, productName: product.name,
-        lotId, expiry: lot.expiry,
-        amount, date: new Date().toISOString(),
-      };
-      return { ...d, products, consumption: [record, ...d.consumption] };
-    });
-  }
-  function addCategory(cat){
-    setData(d => ({ ...d, categories: [...d.categories, cat] }));
-  }
-  function updateCategory(id, patch){
-    setData(d => ({ ...d, categories: d.categories.map(c => c.id === id ? { ...c, ...patch } : c) }));
-  }
-  function deleteCategory(id){
-    setData(d => ({ ...d, categories: d.categories.filter(c => c.id !== id) }));
-  }
-
-  function exportJSON(){
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `despensa-backup-${todayISO()}.json`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('Inventario exportado ✅');
-  }
-  function importJSON(file){
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try{
-        const parsed = JSON.parse(e.target.result);
-        if(!parsed.products || !parsed.categories) throw new Error('formato inválido');
-        setData({ products: parsed.products, categories: parsed.categories, consumption: parsed.consumption || [] });
-        showToast('Inventario importado ✅');
-      }catch(err){
-        showToast('No se pudo leer el archivo ⚠️');
-      }
+    const product = products.find(p => p.id === productId);
+    const lot = product.lots.find(l => l.id === lotId);
+    const record = {
+      id: uid(), productId, productName: product.name,
+      lotId, expiry: lot.expiry, amount, date: new Date().toISOString(),
     };
-    reader.readAsText(file);
-  }
-
-  return (
-    <div className="app">
-      <div className="blob blob1"></div>
-      <div className="blob blob2"></div>
-      <div className="blob blob3"></div>
-      <div className="blob blob4"></div>
-
-      <Topbar tab={tab} onImport={() => fileInputRef.current.click()} onExport={exportJSON} />
-      <input type="file" accept="application/json" ref={fileInputRef} style={{display:'none'}}
-        onChange={e => { if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; }} />
-
-      <div className="content">
-        {tab === 'home' && (
-          <HomeTab
-            okCount={okCount} warningLots={warningLots} expiredLots={expiredLots}
-            categories={categories}
-            onOpenProduct={(p) => setSheet({ type:'productDetail', payload:p })}
-          />
-        )}
-        {tab === 'inventory' && (
-          <InventoryTab
-            products={products} categories={categories}
-            onOpenProduct={(p) => setSheet({ type:'productDetail', payload:p })}
-          />
-        )}
-        {tab === 'reports' && (
-          <ReportsTab consumption={data.consumption} />
-        )}
-        {tab === 'categories' && (
-          <CategoriesTab
-            categories={categories}
-            onAdd={() => setSheet({ type:'categoryForm', payload:null })}
-            onEdit={(c) => setSheet({ type:'categoryForm', payload:c })}
-            onDelete={deleteCategory}
-          />
-        )}
-      </div>
-
-      <button className="fab" onClick={() => setSheet({ type:'productForm', payload:null })}>+</button>
-
-      <TabBar tab={tab} setTab={setTab} />
-
-      {sheet && (
-        <SheetRouter
-          sheet={sheet} setSheet={setSheet}
-          categories={categories} products={products}
-          addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct}
-          addLot={addLot} consumeLot={consumeLot}
-          addCategory={addCategory} updateCategory={updateCategory}
-          showToast={showToast}
-        />
-      )}
-
-      {toast && <div className="toast">{toast}</div>}
-    </div>
-  );
+    return { ...d, products, consumption: [record, ...d.consumption] };
+  });
+}
+function addCategory(cat){
+  setData(d => ({ ...d, categories: [...d.categories, cat] }));
+}
+function updateCategory(id, patch){
+  setData(d => ({ ...d, categories: d.categories.map(c => c.id === id ? { ...c, ...patch } : c) }));
+}
+function deleteCategory(id){
+  setData(d => ({ ...d, categories: d.categories.filter(c => c.id !== id) }));
 }
 
-function Topbar({ tab, onImport, onExport }){
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(state.data, null, 2)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `despensa-backup-${todayISO()}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Inventario exportado ✅');
+}
+function importJSON(file){
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try{
+      const parsed = JSON.parse(e.target.result);
+      if(!parsed.products || !parsed.categories) throw new Error('formato inválido');
+      state.data = { products: parsed.products, categories: parsed.categories, consumption: parsed.consumption || [] };
+      saveData(state.data);
+      showToast('Inventario importado ✅');
+      render();
+    }catch(err){
+      showToast('No se pudo leer el archivo ⚠️');
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ---------- Derived data ----------
+function getAllLots(){
+  const out = [];
+  state.data.products.forEach(p => {
+    (p.lots || []).forEach(l => {
+      if(l.qty > 0) out.push({ ...l, product: p, status: lotStatus(l, p.alertDays ?? 3) });
+    });
+  });
+  return out;
+}
+
+// ---------- Render: Topbar ----------
+function renderTopbar(){
   const titles = { home:'Mi Despensa', inventory:'Inventario', reports:'Reportes', categories:'Categorías' };
-  return (
-    <div className="topbar">
-      <div className="row-between">
+  const dateStr = new Date().toLocaleDateString('es-CL', { weekday:'long', day:'numeric', month:'long' });
+  return `
+    <div class="topbar">
+      <div class="row-between">
         <div>
-          <h1>{titles[tab]}</h1>
-          <div className="sub">{new Date().toLocaleDateString('es-CL', { weekday:'long', day:'numeric', month:'long' })}</div>
+          <h1>${titles[state.tab]}</h1>
+          <div class="sub">${esc(dateStr)}</div>
         </div>
-        <div style={{display:'flex', gap:8}}>
-          <button className="icon-btn" onClick={onImport} title="Importar">⬇️</button>
-          <button className="icon-btn" onClick={onExport} title="Exportar">⬆️</button>
+        <div style="display:flex; gap:8px;">
+          <button class="icon-btn" id="btn-import" title="Importar">⬇️</button>
+          <button class="icon-btn" id="btn-export" title="Exportar">⬆️</button>
         </div>
       </div>
     </div>
-  );
+    <input type="file" accept="application/json" id="file-input" style="display:none" />
+  `;
 }
 
-function TabBar({ tab, setTab }){
+// ---------- Render: Tab bar ----------
+function renderTabBar(){
   const items = [
     { id:'home', icon:'🏠', label:'Inicio' },
     { id:'inventory', icon:'🧺', label:'Inventario' },
     { id:'reports', icon:'📊', label:'Reportes' },
     { id:'categories', icon:'🏷️', label:'Categorías' },
   ];
-  return (
-    <div className="tabbar">
-      <div className="tabbar-inner glass-strong" style={{borderRadius:'24px 24px 0 0'}}>
-        {items.map(it => (
-          <button key={it.id} className={`tab-btn ${tab===it.id?'active':''}`} onClick={() => setTab(it.id)}>
-            <span className="tab-icon">{it.icon}</span>
-            <span>{it.label}</span>
+  return `
+    <div class="tabbar">
+      <div class="tabbar-inner glass-strong" style="border-radius:24px 24px 0 0;">
+        ${items.map(it => `
+          <button class="tab-btn ${state.tab===it.id?'active':''}" data-tab="${it.id}">
+            <span class="tab-icon">${it.icon}</span>
+            <span>${it.label}</span>
           </button>
-        ))}
+        `).join('')}
       </div>
     </div>
-  );
+  `;
 }
 
-// ---------- Home Tab ----------
-function HomeTab({ okCount, warningLots, expiredLots, categories, onOpenProduct }){
-  return (
-    <div>
-      <div className="stats-row">
-        <div className="glass stat-card mint">
-          <div className="stat-num">{okCount}</div>
-          <div className="stat-label">Vigentes</div>
-        </div>
-        <div className="glass stat-card peach">
-          <div className="stat-num">{warningLots.length}</div>
-          <div className="stat-label">Por vencer</div>
-        </div>
-        <div className="glass stat-card coral">
-          <div className="stat-num">{expiredLots.length}</div>
-          <div className="stat-label">Vencidos</div>
-        </div>
-      </div>
-
-      {expiredLots.length > 0 && (
-        <>
-          <div className="section-title first">Vencidos</div>
-          {expiredLots.map(l => <LotRow key={l.id} lot={l} onClick={() => onOpenProduct(l.product)} />)}
-        </>
-      )}
-
-      <div className="section-title" style={{marginTop: expiredLots.length ? 22 : 4}}>Por vencer pronto</div>
-      {warningLots.length === 0 ? (
-        <div className="glass empty-state">
-          <div className="emoji">✨</div>
-          <p>Nada por vencer en los próximos días.<br/>Tu despensa está bajo control.</p>
-        </div>
-      ) : (
-        warningLots.map(l => <LotRow key={l.id} lot={l} onClick={() => onOpenProduct(l.product)} />)
-      )}
-    </div>
-  );
-}
-
-function LotRow({ lot, onClick }){
+// ---------- Render: Lot row (home) ----------
+function renderLotRow(lot){
   const color = COLOR_MAP[STATUS_COLOR[lot.status]];
   const d = daysBetween(lot.expiry);
   const dayLabel = d < 0 ? `Venció hace ${Math.abs(d)} día${Math.abs(d)===1?'':'s'}` : d === 0 ? 'Vence hoy' : `Vence en ${d} día${d===1?'':'s'}`;
-  return (
-    <div className="glass lot-card" style={{ '--accent': color.deep }} onClick={onClick}>
-      <div className="lot-info">
-        <p className="lot-name">{lot.product.name}</p>
-        <div className="lot-meta">
-          <span>{dayLabel}</span>
-          <span className="dot"></span>
-          <span>{fmtDate(lot.expiry)}</span>
-          <span className="dot"></span>
-          <span>{lot.qty} {lot.product.unit || 'un.'}</span>
+  return `
+    <div class="glass lot-card" style="--accent:${color.deep}" data-open-product="${lot.product.id}">
+      <div class="lot-info">
+        <p class="lot-name">${esc(lot.product.name)}</p>
+        <div class="lot-meta">
+          <span>${dayLabel}</span><span class="dot"></span><span>${fmtDate(lot.expiry)}</span>
+          <span class="dot"></span><span>${lot.qty} ${esc(lot.product.unit || 'un.')}</span>
         </div>
       </div>
-      <span className="lot-badge" style={{ background: color.deep }}>{STATUS_LABEL[lot.status]}</span>
+      <span class="lot-badge" style="background:${color.deep}">${STATUS_LABEL[lot.status]}</span>
     </div>
-  );
+  `;
 }
 
-// ---------- Inventory Tab ----------
-function InventoryTab({ products, categories, onOpenProduct }){
-  const [query, setQuery] = useState('');
-  const [filterCat, setFilterCat] = useState('all');
-  const [filterLoc, setFilterLoc] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
+// ---------- Render: Home Tab ----------
+function renderHome(){
+  const allLots = getAllLots();
+  const warningLots = allLots.filter(l => l.status === 'warning').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
+  const expiredLots = allLots.filter(l => l.status === 'expired').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
+  const okCount = allLots.filter(l => l.status === 'ok').length;
 
-  const enriched = useMemo(() => products.map(p => {
+  let html = `
+    <div class="stats-row">
+      <div class="glass stat-card mint"><div class="stat-num">${okCount}</div><div class="stat-label">Vigentes</div></div>
+      <div class="glass stat-card peach"><div class="stat-num">${warningLots.length}</div><div class="stat-label">Por vencer</div></div>
+      <div class="glass stat-card coral"><div class="stat-num">${expiredLots.length}</div><div class="stat-label">Vencidos</div></div>
+    </div>
+  `;
+
+  if(expiredLots.length > 0){
+    html += `<div class="section-title first">Vencidos</div>`;
+    html += expiredLots.map(renderLotRow).join('');
+  }
+
+  html += `<div class="section-title" style="margin-top:${expiredLots.length?22:4}px">Por vencer pronto</div>`;
+  if(warningLots.length === 0){
+    html += `<div class="glass empty-state"><div class="emoji">✨</div><p>Nada por vencer en los próximos días.<br/>Tu despensa está bajo control.</p></div>`;
+  } else {
+    html += warningLots.map(renderLotRow).join('');
+  }
+  return html;
+}
+
+// ---------- Render: Inventory Tab ----------
+function renderInventory(){
+  const f = state.inventoryFilters;
+  const products = state.data.products;
+  const categories = state.data.categories;
+
+  const enriched = products.map(p => {
     const lots = (p.lots||[]).filter(l => l.qty > 0);
     const total = lots.reduce((s,l) => s + l.qty, 0);
     const sorted = [...lots].sort((a,b) => daysBetween(a.expiry) - daysBetween(b.expiry));
@@ -658,510 +581,609 @@ function InventoryTab({ products, categories, onOpenProduct }){
       return rank[s] > rank[worst] ? s : worst;
     }, 'ok');
     return { ...p, total, nextLot, worstStatus, lotsCount: lots.length };
-  }), [products]);
+  });
 
   const filtered = enriched.filter(p => {
-    if(query && !p.name.toLowerCase().includes(query.toLowerCase())) return false;
-    if(filterCat !== 'all' && p.categoryId !== filterCat) return false;
-    if(filterLoc !== 'all' && p.locationId !== filterLoc) return false;
-    if(filterStatus !== 'all'){
-      if(filterStatus === 'empty' && p.total > 0) return false;
-      if(filterStatus !== 'empty' && p.worstStatus !== filterStatus) return false;
-    }
+    if(f.query && !p.name.toLowerCase().includes(f.query.toLowerCase())) return false;
+    if(f.cat !== 'all' && p.categoryId !== f.cat) return false;
+    if(f.loc !== 'all' && p.locationId !== f.loc) return false;
+    if(f.status !== 'all' && p.worstStatus !== f.status) return false;
     return true;
   });
 
-  // suggestions for autocomplete-ish search feedback
-  const suggestions = query && filtered.length === 0
-    ? products.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0,3)
-    : [];
-
-  return (
-    <div>
-      <div className="glass search-bar">
-        <span style={{fontSize:16}}>🔍</span>
-        <input placeholder="Buscar producto..." value={query} onChange={e => setQuery(e.target.value)} />
-        {query && <button className="icon-btn" style={{width:26,height:26}} onClick={() => setQuery('')}>✕</button>}
-      </div>
-
-      <div className="filter-row">
-        <Chip active={filterStatus==='all'} onClick={() => setFilterStatus('all')}>Todos</Chip>
-        <Chip active={filterStatus==='warning'} onClick={() => setFilterStatus('warning')}>Por vencer</Chip>
-        <Chip active={filterStatus==='expired'} onClick={() => setFilterStatus('expired')}>Vencidos</Chip>
-        <Chip active={filterLoc!=='all'} onClick={() => {}} dropdown>
-          <select value={filterLoc} onChange={e=>setFilterLoc(e.target.value)} style={{background:'none', border:'none', color:'inherit', fontWeight:600, fontSize:12.5, fontFamily:'inherit'}}>
-            <option value="all">📍 Lugar</option>
-            {LOCATIONS.map(l => <option key={l.id} value={l.id}>{l.emoji} {l.label}</option>)}
-          </select>
-        </Chip>
-        <Chip active={filterCat!=='all'} onClick={() => {}} dropdown>
-          <select value={filterCat} onChange={e=>setFilterCat(e.target.value)} style={{background:'none', border:'none', color:'inherit', fontWeight:600, fontSize:12.5, fontFamily:'inherit'}}>
-            <option value="all">🏷️ Categoría</option>
-            {categories.map(c => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
-          </select>
-        </Chip>
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="glass empty-state">
-          <div className="emoji">🔎</div>
-          <p>{products.length === 0 ? 'Aún no agregas productos.\nToca el botón + para empezar.' : 'No encontramos productos con ese filtro.'}</p>
-        </div>
-      ) : (
-        filtered.map(p => {
-          const cat = categories.find(c => c.id === p.categoryId);
-          const loc = LOCATIONS.find(l => l.id === p.locationId);
-          const color = COLOR_MAP[cat?.color || 'lavender'];
-          return (
-            <div key={p.id} className="glass product-card" onClick={() => onOpenProduct(p)}>
-              <div className="product-emoji" style={{ '--chip-bg': color.bg }}>{cat?.emoji || '📦'}</div>
-              <div style={{flex:1, minWidth:0}}>
-                <p className="product-name">{p.name}</p>
-                <div className="product-meta">
-                  {loc?.emoji} {loc?.label} · {p.lotsCount} lote{p.lotsCount===1?'':'s'}
-                  {p.nextLot && ` · vence ${fmtDate(p.nextLot.expiry)}`}
-                </div>
-              </div>
-              <div className="product-right">
-                <div className="product-total">{p.total} <span style={{fontSize:11, fontWeight:500, color:'var(--text-soft)'}}>{p.unit||'un.'}</span></div>
-                {p.worstStatus !== 'ok' && (
-                  <span className="lot-badge" style={{ background: COLOR_MAP[STATUS_COLOR[p.worstStatus]].deep, fontSize:9.5, padding:'2px 7px' }}>
-                    {STATUS_LABEL[p.worstStatus]}
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })
-      )}
+  let html = `
+    <div class="glass search-bar">
+      <span style="font-size:16px;">🔍</span>
+      <input placeholder="Buscar producto..." id="search-input" value="${esc(f.query)}" />
+      ${f.query ? `<button class="icon-btn" style="width:26px;height:26px;" id="clear-search">✕</button>` : ''}
     </div>
-  );
-}
 
-function Chip({ active, onClick, children, dropdown }){
-  return (
-    <div className={`filter-chip ${active?'active':''}`} onClick={dropdown ? undefined : onClick}>
-      {children}
-    </div>
-  );
-}
-
-// ---------- Reports Tab ----------
-function ReportsTab({ consumption }){
-  const [period, setPeriod] = useState(30);
-
-  const filtered = useMemo(() => {
-    const cutoff = Date.now() - period * 86400000;
-    return consumption.filter(c => new Date(c.date).getTime() >= cutoff);
-  }, [consumption, period]);
-
-  const grouped = useMemo(() => {
-    const map = {};
-    filtered.forEach(c => {
-      if(!map[c.productName]) map[c.productName] = { name: c.productName, total: 0, count: 0 };
-      map[c.productName].total += c.amount;
-      map[c.productName].count += 1;
-    });
-    return Object.values(map).sort((a,b) => b.total - a.total);
-  }, [filtered]);
-
-  const maxTotal = grouped[0]?.total || 1;
-
-  return (
-    <div>
-      <div className="glass" style={{padding:14, marginBottom:18}}>
-        <div className="section-title first" style={{marginTop:0, marginLeft:0}}>Periodo</div>
-        <div className="seg">
-          {[7,15,30,90].map(p => (
-            <button key={p} className={`seg-btn ${period===p?'active':''}`} onClick={() => setPeriod(p)}>
-              {p===90 ? '3 meses' : `${p} días`}
-            </button>
-          ))}
-        </div>
+    <div class="filter-row">
+      <div class="filter-chip ${f.status==='all'?'active':''}" data-status="all">Todos</div>
+      <div class="filter-chip ${f.status==='warning'?'active':''}" data-status="warning">Por vencer</div>
+      <div class="filter-chip ${f.status==='expired'?'active':''}" data-status="expired">Vencidos</div>
+      <div class="filter-chip ${f.loc!=='all'?'active':''}">
+        <select id="filter-loc" style="background:none; border:none; color:inherit; font-weight:600; font-size:12.5px; font-family:inherit;">
+          <option value="all" ${f.loc==='all'?'selected':''}>📍 Lugar</option>
+          ${LOCATIONS.map(l => `<option value="${l.id}" ${f.loc===l.id?'selected':''}>${l.emoji} ${l.label}</option>`).join('')}
+        </select>
       </div>
-
-      {grouped.length === 0 ? (
-        <div className="glass empty-state">
-          <div className="emoji">📭</div>
-          <p>Sin consumo registrado en este periodo.<br/>Descuenta stock desde el detalle de un producto.</p>
-        </div>
-      ) : (
-        <div className="glass-strong" style={{padding:'8px 18px 18px'}}>
-          <div className="section-title first">Sugerido para reponer</div>
-          {grouped.map((g, i) => (
-            <div key={g.name} className="report-row">
-              <div style={{display:'flex', alignItems:'flex-start', gap:10, flex:1}}>
-                <span className="report-rank">{i+1}</span>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600, fontSize:14.5}}>{g.name}</div>
-                  <div style={{fontSize:11.5, color:'var(--text-soft)'}}>{g.count} consumo{g.count===1?'':'s'} registrado{g.count===1?'':'s'}</div>
-                  <div className="report-bar-bg"><div className="report-bar-fill" style={{width:`${(g.total/maxTotal)*100}%`}}></div></div>
-                </div>
-              </div>
-              <div style={{fontWeight:700, fontSize:15, marginLeft:10, fontVariantNumeric:'tabular-nums'}}>{g.total}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <div class="filter-chip ${f.cat!=='all'?'active':''}">
+        <select id="filter-cat" style="background:none; border:none; color:inherit; font-weight:600; font-size:12.5px; font-family:inherit;">
+          <option value="all" ${f.cat==='all'?'selected':''}>🏷️ Categoría</option>
+          ${categories.map(c => `<option value="${c.id}" ${f.cat===c.id?'selected':''}>${c.emoji} ${esc(c.name)}</option>`).join('')}
+        </select>
+      </div>
     </div>
-  );
-}
+  `;
 
-// ---------- Categories Tab ----------
-function CategoriesTab({ categories, onAdd, onEdit, onDelete }){
-  return (
-    <div>
-      {categories.map(c => {
-        const color = COLOR_MAP[c.color];
-        return (
-          <div key={c.id} className="glass cat-pill" style={{ justifyContent:'space-between' }}>
-            <div style={{display:'flex', alignItems:'center', gap:10}}>
-              <div className="product-emoji" style={{width:34, height:34, fontSize:16, '--chip-bg': color.bg}}>{c.emoji}</div>
-              <span style={{fontWeight:600, fontSize:14.5}}>{c.name}</span>
-            </div>
-            <div style={{display:'flex', gap:6}}>
-              <button className="icon-btn" onClick={() => onEdit(c)}>✏️</button>
-              <button className="icon-btn" onClick={() => { if(confirm(`¿Eliminar la categoría "${c.name}"?`)) onDelete(c.id); }}>🗑️</button>
+  if(filtered.length === 0){
+    const msg = products.length === 0 ? 'Aún no agregas productos.<br/>Toca el botón + para empezar.' : 'No encontramos productos con ese filtro.';
+    html += `<div class="glass empty-state"><div class="emoji">🔎</div><p>${msg}</p></div>`;
+  } else {
+    html += filtered.map(p => {
+      const cat = categories.find(c => c.id === p.categoryId);
+      const loc = LOCATIONS.find(l => l.id === p.locationId);
+      const color = COLOR_MAP[cat?.color || 'lavender'];
+      return `
+        <div class="glass product-card" data-open-product="${p.id}">
+          <div class="product-emoji" style="--chip-bg:${color.bg}">${cat?.emoji || '📦'}</div>
+          <div style="flex:1; min-width:0;">
+            <p class="product-name">${esc(p.name)}</p>
+            <div class="product-meta">
+              ${loc?.emoji||''} ${esc(loc?.label||'')} · ${p.lotsCount} lote${p.lotsCount===1?'':'s'}
+              ${p.nextLot ? ` · vence ${fmtDate(p.nextLot.expiry)}` : ''}
             </div>
           </div>
-        );
-      })}
-      <button className="btn btn-soft btn-block" style={{marginTop:10}} onClick={onAdd}>+ Nueva categoría</button>
-    </div>
-  );
-}
-
-// ---------- Sheet Router ----------
-function SheetRouter({ sheet, setSheet, categories, products, addProduct, updateProduct, deleteProduct, addLot, consumeLot, addCategory, updateCategory, showToast }){
-  const close = () => setSheet(null);
-
-  if(sheet.type === 'productForm'){
-    return <ProductFormSheet onClose={close} categories={categories}
-      onSave={(prod) => { addProduct(prod); close(); showToast(`${prod.name} agregado ✅`); }} />;
-  }
-  if(sheet.type === 'productDetail'){
-    const product = products.find(p => p.id === sheet.payload.id);
-    if(!product) { close(); return null; }
-    return (
-      <ProductDetailSheet
-        product={product} categories={categories}
-        onClose={close}
-        onAddLot={(lot) => { addLot(product.id, lot); showToast('Lote agregado ✅'); }}
-        onConsume={(lotId, amount) => { consumeLot(product.id, lotId, amount); showToast('Stock descontado ✅'); }}
-        onDelete={() => { if(confirm(`¿Eliminar "${product.name}" y todos sus lotes?`)){ deleteProduct(product.id); close(); showToast('Producto eliminado'); } }}
-        onEditAlert={(alertDays) => updateProduct(product.id, { alertDays })}
-      />
-    );
-  }
-  if(sheet.type === 'categoryForm'){
-    return (
-      <CategoryFormSheet
-        category={sheet.payload}
-        onClose={close}
-        onSave={(cat) => {
-          if(sheet.payload) updateCategory(sheet.payload.id, cat);
-          else addCategory({ id: uid(), ...cat });
-          close();
-        }}
-      />
-    );
-  }
-  return null;
-}
-
-function Sheet({ title, onClose, children }){
-  return (
-    <div className="overlay" onClick={(e) => { if(e.target === e.currentTarget) onClose(); }}>
-      <div className="sheet">
-        <div className="sheet-handle"></div>
-        <div className="row-between">
-          <h2 className="sheet-title">{title}</h2>
-          <button className="icon-btn" onClick={onClose}>✕</button>
+          <div class="product-right">
+            <div class="product-total">${p.total} <span style="font-size:11px; font-weight:500; color:var(--text-soft);">${esc(p.unit||'un.')}</span></div>
+            ${p.worstStatus !== 'ok' ? `<span class="lot-badge" style="background:${COLOR_MAP[STATUS_COLOR[p.worstStatus]].deep}; font-size:9.5px; padding:2px 7px;">${STATUS_LABEL[p.worstStatus]}</span>` : ''}
+          </div>
         </div>
-        {children}
+      `;
+    }).join('');
+  }
+  return html;
+}
+
+// ---------- Render: Reports Tab ----------
+function renderReports(){
+  const period = state.reportPeriod;
+  const cutoff = Date.now() - period * 86400000;
+  const filtered = state.data.consumption.filter(c => new Date(c.date).getTime() >= cutoff);
+
+  const map = {};
+  filtered.forEach(c => {
+    if(!map[c.productName]) map[c.productName] = { name: c.productName, total: 0, count: 0 };
+    map[c.productName].total += c.amount;
+    map[c.productName].count += 1;
+  });
+  const grouped = Object.values(map).sort((a,b) => b.total - a.total);
+  const maxTotal = grouped[0]?.total || 1;
+
+  let html = `
+    <div class="glass" style="padding:14px; margin-bottom:18px;">
+      <div class="section-title first" style="margin-top:0; margin-left:0;">Periodo</div>
+      <div class="seg">
+        ${[7,15,30,90].map(p => `<button class="seg-btn ${period===p?'active':''}" data-period="${p}">${p===90?'3 meses':`${p} días`}</button>`).join('')}
       </div>
     </div>
-  );
-}
+  `;
 
-// ---------- Product Form (new product + first lot) ----------
-function ProductFormSheet({ onClose, onSave, categories }){
-  const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState(categories[0]?.id || '');
-  const [locationId, setLocationId] = useState('despensa');
-  const [unit, setUnit] = useState('un.');
-  const [qty, setQty] = useState(1);
-  const [expiry, setExpiry] = useState('');
-  const [alertDays, setAlertDays] = useState(3);
-
-  const valid = name.trim() && expiry && qty > 0;
-
-  function handleSave(){
-    if(!valid) return;
-    const product = {
-      id: uid(),
-      name: name.trim(),
-      categoryId, locationId, unit: unit.trim() || 'un.',
-      alertDays: Number(alertDays),
-      lots: [{ id: uid(), qty: Number(qty), expiry }],
-    };
-    onSave(product);
+  if(grouped.length === 0){
+    html += `<div class="glass empty-state"><div class="emoji">📭</div><p>Sin consumo registrado en este periodo.<br/>Descuenta stock desde el detalle de un producto.</p></div>`;
+  } else {
+    html += `<div class="glass-strong" style="padding:8px 18px 18px;"><div class="section-title first">Sugerido para reponer</div>`;
+    html += grouped.map((g, i) => `
+      <div class="report-row">
+        <div style="display:flex; align-items:flex-start; gap:10px; flex:1;">
+          <span class="report-rank">${i+1}</span>
+          <div style="flex:1;">
+            <div style="font-weight:600; font-size:14.5px;">${esc(g.name)}</div>
+            <div style="font-size:11.5px; color:var(--text-soft);">${g.count} consumo${g.count===1?'':'s'} registrado${g.count===1?'':'s'}</div>
+            <div class="report-bar-bg"><div class="report-bar-fill" style="width:${(g.total/maxTotal)*100}%"></div></div>
+          </div>
+        </div>
+        <div style="font-weight:700; font-size:15px; margin-left:10px; font-variant-numeric:tabular-nums;">${g.total}</div>
+      </div>
+    `).join('');
+    html += `</div>`;
   }
-
-  return (
-    <Sheet title="Nuevo producto" onClose={onClose}>
-      <div className="field">
-        <label>Nombre del producto</label>
-        <input autoFocus placeholder="Ej: Leche Soprole 1L" value={name} onChange={e=>setName(e.target.value)} />
-      </div>
-
-      <div className="field">
-        <label>Categoría</label>
-        <div className="seg">
-          {categories.map(c => (
-            <button key={c.id} type="button" className={`seg-btn ${categoryId===c.id?'active':''}`} onClick={() => setCategoryId(c.id)}>
-              {c.emoji} {c.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="field">
-        <label>Lugar</label>
-        <div className="seg">
-          {LOCATIONS.map(l => (
-            <button key={l.id} type="button" className={`seg-btn ${locationId===l.id?'active':''}`} onClick={() => setLocationId(l.id)}>
-              {l.emoji} {l.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{display:'flex', gap:10}}>
-        <div className="field" style={{flex:1}}>
-          <label>Cantidad inicial</label>
-          <input type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} />
-        </div>
-        <div className="field" style={{flex:1}}>
-          <label>Unidad</label>
-          <input placeholder="un. / kg / L" value={unit} onChange={e=>setUnit(e.target.value)} />
-        </div>
-      </div>
-
-      <div className="field">
-        <label>Fecha de vencimiento (de este lote)</label>
-        <input type="date" value={expiry} onChange={e=>setExpiry(e.target.value)} />
-      </div>
-
-      <div className="field">
-        <label>Avisarme con cuántos días de anticipación</label>
-        <input type="number" min="0" value={alertDays} onChange={e=>setAlertDays(e.target.value)} />
-      </div>
-
-      <button className="btn btn-primary btn-block" disabled={!valid} style={{opacity: valid?1:0.5}} onClick={handleSave}>
-        Guardar producto
-      </button>
-    </Sheet>
-  );
+  return html;
 }
 
-// ---------- Product Detail (lots, add stock, consume, edit alert) ----------
-function ProductDetailSheet({ product, categories, onClose, onAddLot, onConsume, onDelete, onEditAlert }){
-  const [mode, setMode] = useState('view'); // view | addLot | consume
+// ---------- Render: Categories Tab ----------
+function renderCategories(){
+  const categories = state.data.categories;
+  let html = categories.map(c => {
+    const color = COLOR_MAP[c.color];
+    return `
+      <div class="glass cat-pill" style="justify-content:space-between;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="product-emoji" style="width:34px; height:34px; font-size:16px; --chip-bg:${color.bg}">${c.emoji}</div>
+          <span style="font-weight:600; font-size:14.5px;">${esc(c.name)}</span>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="icon-btn" data-edit-cat="${c.id}">✏️</button>
+          <button class="icon-btn" data-delete-cat="${c.id}">🗑️</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  html += `<button class="btn btn-soft btn-block" style="margin-top:10px;" id="btn-add-category">+ Nueva categoría</button>`;
+  return html;
+}
+
+// ---------- Sheets ----------
+function renderSheetWrapper(title, innerHtml, extraClass){
+  return `
+    <div class="overlay" id="sheet-overlay">
+      <div class="sheet ${extraClass||''}">
+        <div class="sheet-handle"></div>
+        <div class="row-between">
+          <h2 class="sheet-title">${title}</h2>
+          <button class="icon-btn" id="sheet-close">✕</button>
+        </div>
+        ${innerHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderProductFormSheet(){
+  const categories = state.data.categories;
+  const draft = state.productDraft || { name:'', categoryId: categories[0]?.id||'', locationId:'despensa', unit:'un.', qty:1, expiry:'', alertDays:3 };
+  state.productDraft = draft;
+  const valid = draft.name.trim() && draft.expiry && draft.qty > 0;
+
+  return renderSheetWrapper('Nuevo producto', `
+    <div class="field">
+      <label>Nombre del producto</label>
+      <input id="pf-name" placeholder="Ej: Leche Soprole 1L" value="${esc(draft.name)}" autofocus />
+    </div>
+    <div class="field">
+      <label>Categoría</label>
+      <div class="seg">
+        ${categories.map(c => `<button type="button" class="seg-btn ${draft.categoryId===c.id?'active':''}" data-pf-cat="${c.id}">${c.emoji} ${esc(c.name)}</button>`).join('')}
+      </div>
+    </div>
+    <div class="field">
+      <label>Lugar</label>
+      <div class="seg">
+        ${LOCATIONS.map(l => `<button type="button" class="seg-btn ${draft.locationId===l.id?'active':''}" data-pf-loc="${l.id}">${l.emoji} ${l.label}</button>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <div class="field" style="flex:1;">
+        <label>Cantidad inicial</label>
+        <input type="number" min="1" id="pf-qty" value="${draft.qty}" />
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Unidad</label>
+        <input id="pf-unit" placeholder="un. / kg / L" value="${esc(draft.unit)}" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Fecha de vencimiento (de este lote)</label>
+      <input type="date" id="pf-expiry" value="${draft.expiry}" />
+    </div>
+    <div class="field">
+      <label>Avisarme con cuántos días de anticipación</label>
+      <input type="number" min="0" id="pf-alert" value="${draft.alertDays}" />
+    </div>
+    <button class="btn btn-primary btn-block" id="pf-save" ${valid?'':'disabled'} style="opacity:${valid?1:0.5}">Guardar producto</button>
+  `);
+}
+
+function renderProductDetailSheet(){
+  const product = state.data.products.find(p => p.id === state.sheet.payload.id);
+  if(!product){ state.sheet = null; return ''; }
+  const mode = state.detailMode || 'view';
+  const categories = state.data.categories;
   const cat = categories.find(c => c.id === product.categoryId);
   const loc = LOCATIONS.find(l => l.id === product.locationId);
   const activeLots = (product.lots||[]).filter(l => l.qty > 0).sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
   const total = activeLots.reduce((s,l)=>s+l.qty,0);
 
   if(mode === 'addLot'){
-    return <AddLotSheet product={product} onClose={() => setMode('view')}
-      onSave={(lot) => { onAddLot(lot); setMode('view'); }} />;
-  }
-  if(mode === 'consume'){
-    return <ConsumeSheet product={product} lots={activeLots} onClose={() => setMode('view')}
-      onConfirm={(lotId, amount) => { onConsume(lotId, amount); setMode('view'); }} />;
-  }
-
-  return (
-    <Sheet title={product.name} onClose={onClose}>
-      <div style={{display:'flex', gap:8, marginBottom:18, flexWrap:'wrap'}}>
-        <span className="lot-badge" style={{background:'var(--lavender-deep)'}}>{cat?.emoji} {cat?.name}</span>
-        <span className="lot-badge" style={{background:'var(--sky-deep)'}}>{loc?.emoji} {loc?.label}</span>
-        <span className="lot-badge" style={{background:'var(--text-faint)'}}>Total: {total} {product.unit}</span>
-      </div>
-
-      <div className="section-title first">Lotes activos</div>
-      {activeLots.length === 0 ? (
-        <div className="glass empty-state" style={{padding:30}}>
-          <div className="emoji">📦</div>
-          <p>Sin stock disponible.<br/>Agrega un lote nuevo.</p>
-        </div>
-      ) : (
-        activeLots.map(l => {
-          const status = lotStatus(l, product.alertDays ?? 3);
-          const color = COLOR_MAP[STATUS_COLOR[status]];
-          const d = daysBetween(l.expiry);
-          const dayLabel = d < 0 ? `Venció hace ${Math.abs(d)} d.` : d === 0 ? 'Vence hoy' : `${d} día${d===1?'':'s'} restantes`;
-          return (
-            <div key={l.id} className="glass lot-card" style={{ '--accent': color.deep }}>
-              <div className="lot-info">
-                <p className="lot-name">{fmtDate(l.expiry)}</p>
-                <div className="lot-meta"><span>{dayLabel}</span><span className="dot"></span><span>{l.qty} {product.unit}</span></div>
-              </div>
-              <span className="lot-badge" style={{background: color.deep}}>{STATUS_LABEL[status]}</span>
-            </div>
-          );
-        })
-      )}
-
-      <div className="field" style={{marginTop:20}}>
-        <label>Días de anticipación para avisar</label>
-        <input type="number" min="0" defaultValue={product.alertDays ?? 3}
-          onBlur={e => onEditAlert(Number(e.target.value))} />
-      </div>
-
-      <div style={{display:'flex', gap:10, marginTop:16}}>
-        <button className="btn btn-soft" style={{flex:1}} onClick={() => setMode('addLot')}>➕ Agregar stock</button>
-        <button className="btn btn-primary" style={{flex:1}} onClick={() => setMode('consume')} disabled={total===0} >➖ Descontar</button>
-      </div>
-      <button className="btn btn-danger-soft btn-block" style={{marginTop:10}} onClick={onDelete}>Eliminar producto</button>
-    </Sheet>
-  );
-}
-
-function AddLotSheet({ product, onClose, onSave }){
-  const [qty, setQty] = useState(1);
-  const [expiry, setExpiry] = useState('');
-  const valid = qty > 0 && expiry;
-  return (
-    <Sheet title={`Agregar stock · ${product.name}`} onClose={onClose}>
-      <div className="field">
+    const draft = state.lotDraft || { qty:1, expiry:'' };
+    state.lotDraft = draft;
+    const valid = draft.qty > 0 && draft.expiry;
+    return renderSheetWrapper(`Agregar stock · ${esc(product.name)}`, `
+      <div class="field">
         <label>Cantidad</label>
-        <div className="stepper">
-          <button onClick={() => setQty(q => Math.max(1, q-1))}>−</button>
-          <input type="number" value={qty} onChange={e=>setQty(Number(e.target.value)||1)} />
-          <button onClick={() => setQty(q => q+1)}>+</button>
-          <span style={{color:'var(--text-soft)', fontWeight:600}}>{product.unit}</span>
+        <div class="stepper">
+          <button id="al-minus">−</button>
+          <input type="number" id="al-qty" value="${draft.qty}" />
+          <button id="al-plus">+</button>
+          <span style="color:var(--text-soft); font-weight:600;">${esc(product.unit)}</span>
         </div>
       </div>
-      <div className="field">
+      <div class="field">
         <label>Fecha de vencimiento de este lote</label>
-        <input type="date" autoFocus value={expiry} onChange={e=>setExpiry(e.target.value)} />
+        <input type="date" id="al-expiry" value="${draft.expiry}" autofocus />
       </div>
-      <button className="btn btn-primary btn-block" disabled={!valid} style={{opacity:valid?1:0.5}}
-        onClick={() => onSave({ id: uid(), qty: Number(qty), expiry })}>
-        Agregar lote
-      </button>
-    </Sheet>
-  );
-}
+      <button class="btn btn-primary btn-block" id="al-save" ${valid?'':'disabled'} style="opacity:${valid?1:0.5}">Agregar lote</button>
+    `);
+  }
 
-function ConsumeSheet({ product, lots, onClose, onConfirm }){
-  const [selectedLot, setSelectedLot] = useState(lots[0]?.id || null);
-  const [amount, setAmount] = useState(1);
+  if(mode === 'consume'){
+    const draft = state.consumeDraft;
+    if(!draft.lotId && activeLots[0]) draft.lotId = activeLots[0].id;
+    const current = activeLots.find(l => l.id === draft.lotId);
+    const maxAmount = current?.qty || 1;
 
-  const current = lots.find(l => l.id === selectedLot);
-  const maxAmount = current?.qty || 1;
-
-  // single lot: skip picker
-  if(lots.length === 1){
-    const lot = lots[0];
-    return (
-      <Sheet title={`Descontar · ${product.name}`} onClose={onClose}>
-        <p style={{fontSize:13.5, color:'var(--text-soft)', marginTop:-8, marginBottom:16}}>
-          Lote único · vence {fmtDate(lot.expiry)} · disponible: {lot.qty} {product.unit}
+    if(activeLots.length === 1){
+      const lot = activeLots[0];
+      return renderSheetWrapper(`Descontar · ${esc(product.name)}`, `
+        <p style="font-size:13.5px; color:var(--text-soft); margin-top:-8px; margin-bottom:16px;">
+          Lote único · vence ${fmtDate(lot.expiry)} · disponible: ${lot.qty} ${esc(product.unit)}
         </p>
-        <div className="field">
+        <div class="field">
           <label>Cantidad a descontar</label>
-          <div className="stepper">
-            <button onClick={() => setAmount(a => Math.max(1, a-1))}>−</button>
-            <input type="number" value={amount} min="1" max={lot.qty} onChange={e=>setAmount(Math.min(lot.qty, Math.max(1, Number(e.target.value)||1)))} />
-            <button onClick={() => setAmount(a => Math.min(lot.qty, a+1))}>+</button>
-            <span style={{color:'var(--text-soft)', fontWeight:600}}>{product.unit}</span>
+          <div class="stepper">
+            <button id="cs-minus">−</button>
+            <input type="number" id="cs-amount" value="${draft.amount}" min="1" max="${lot.qty}" />
+            <button id="cs-plus">+</button>
+            <span style="color:var(--text-soft); font-weight:600;">${esc(product.unit)}</span>
           </div>
         </div>
-        <button className="btn btn-primary btn-block" onClick={() => onConfirm(lot.id, amount)}>Confirmar descuento</button>
-      </Sheet>
-    );
-  }
+        <button class="btn btn-primary btn-block" id="cs-confirm" data-lot="${lot.id}">Confirmar descuento</button>
+      `);
+    }
 
-  return (
-    <Sheet title={`Descontar · ${product.name}`} onClose={onClose}>
-      <p style={{fontSize:13.5, color:'var(--text-soft)', marginTop:-8, marginBottom:14}}>
+    return renderSheetWrapper(`Descontar · ${esc(product.name)}`, `
+      <p style="font-size:13.5px; color:var(--text-soft); margin-top:-8px; margin-bottom:14px;">
         Este producto tiene varios lotes. Elige de cuál estás descontando — sugerimos el que vence antes (FEFO).
       </p>
-      {lots.map((l, i) => {
+      ${activeLots.map((l,i) => {
         const d = daysBetween(l.expiry);
-        return (
-          <button key={l.id} className={`lot-pick ${selectedLot===l.id?'suggested':''}`} onClick={() => { setSelectedLot(l.id); setAmount(1); }}>
-            <div className="lp-top">
-              <span className="lp-name">{fmtDate(l.expiry)} {i===0 && <span className="tag-suggest">SUGERIDO</span>}</span>
-              <span style={{fontWeight:700}}>{l.qty} {product.unit}</span>
+        const isSel = draft.lotId === l.id;
+        return `
+          <button class="lot-pick ${isSel?'suggested':''}" data-pick-lot="${l.id}">
+            <div class="lp-top">
+              <span class="lp-name">${fmtDate(l.expiry)} ${i===0?'<span class="tag-suggest">SUGERIDO</span>':''}</span>
+              <span style="font-weight:700;">${l.qty} ${esc(product.unit)}</span>
             </div>
-            <div className="lp-sub">{d < 0 ? `Vencido hace ${Math.abs(d)} d.` : `Vence en ${d} día${d===1?'':'s'}`}</div>
+            <div class="lp-sub">${d<0?`Vencido hace ${Math.abs(d)} d.`:`Vence en ${d} día${d===1?'':'s'}`}</div>
           </button>
-        );
-      })}
-
-      <div className="field" style={{marginTop:8}}>
+        `;
+      }).join('')}
+      <div class="field" style="margin-top:8px;">
         <label>Cantidad a descontar</label>
-        <div className="stepper">
-          <button onClick={() => setAmount(a => Math.max(1, a-1))}>−</button>
-          <input type="number" value={amount} min="1" max={maxAmount} onChange={e=>setAmount(Math.min(maxAmount, Math.max(1, Number(e.target.value)||1)))} />
-          <button onClick={() => setAmount(a => Math.min(maxAmount, a+1))}>+</button>
-          <span style={{color:'var(--text-soft)', fontWeight:600}}>{product.unit}</span>
+        <div class="stepper">
+          <button id="cs-minus">−</button>
+          <input type="number" id="cs-amount" value="${draft.amount}" min="1" max="${maxAmount}" />
+          <button id="cs-plus">+</button>
+          <span style="color:var(--text-soft); font-weight:600;">${esc(product.unit)}</span>
         </div>
       </div>
+      <button class="btn btn-primary btn-block" id="cs-confirm" data-lot="${draft.lotId||''}" ${draft.lotId?'':'disabled'}>Confirmar descuento</button>
+    `);
+  }
 
-      <button className="btn btn-primary btn-block" disabled={!selectedLot} onClick={() => onConfirm(selectedLot, amount)}>
-        Confirmar descuento
-      </button>
-    </Sheet>
-  );
+  // view mode
+  return renderSheetWrapper(esc(product.name), `
+    <div style="display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;">
+      <span class="lot-badge" style="background:var(--lavender-deep);">${cat?.emoji||''} ${esc(cat?.name||'')}</span>
+      <span class="lot-badge" style="background:var(--sky-deep);">${loc?.emoji||''} ${esc(loc?.label||'')}</span>
+      <span class="lot-badge" style="background:var(--text-faint);">Total: ${total} ${esc(product.unit)}</span>
+    </div>
+    <div class="section-title first">Lotes activos</div>
+    ${activeLots.length === 0 ? `
+      <div class="glass empty-state" style="padding:30px;"><div class="emoji">📦</div><p>Sin stock disponible.<br/>Agrega un lote nuevo.</p></div>
+    ` : activeLots.map(l => {
+      const status = lotStatus(l, product.alertDays ?? 3);
+      const color = COLOR_MAP[STATUS_COLOR[status]];
+      const d = daysBetween(l.expiry);
+      const dayLabel = d<0?`Venció hace ${Math.abs(d)} d.`:d===0?'Vence hoy':`${d} día${d===1?'':'s'} restantes`;
+      return `
+        <div class="glass lot-card" style="--accent:${color.deep}">
+          <div class="lot-info">
+            <p class="lot-name">${fmtDate(l.expiry)}</p>
+            <div class="lot-meta"><span>${dayLabel}</span><span class="dot"></span><span>${l.qty} ${esc(product.unit)}</span></div>
+          </div>
+          <span class="lot-badge" style="background:${color.deep}">${STATUS_LABEL[status]}</span>
+        </div>
+      `;
+    }).join('')}
+    <div class="field" style="margin-top:20px;">
+      <label>Días de anticipación para avisar</label>
+      <input type="number" min="0" id="pd-alert" value="${product.alertDays ?? 3}" data-product="${product.id}" />
+    </div>
+    <div style="display:flex; gap:10px; margin-top:16px;">
+      <button class="btn btn-soft" style="flex:1;" id="pd-add-lot">➕ Agregar stock</button>
+      <button class="btn btn-primary" style="flex:1;" id="pd-consume" ${total===0?'disabled':''}>➖ Descontar</button>
+    </div>
+    <button class="btn btn-danger-soft btn-block" style="margin-top:10px;" id="pd-delete">Eliminar producto</button>
+  `);
 }
 
-// ---------- Category Form ----------
-const EMOJI_OPTIONS = ['🥛','🥫','🍪','🧴','📦','🍞','🥩','🧃','🍫','🧹','🧊','🍎','🧂','☕','🍝'];
-function CategoryFormSheet({ category, onClose, onSave }){
-  const [name, setName] = useState(category?.name || '');
-  const [emoji, setEmoji] = useState(category?.emoji || '📦');
-  const [color, setColor] = useState(category?.color || 'lavender');
-  const valid = name.trim();
+function renderCategoryFormSheet(){
+  const editing = state.sheet.payload;
+  const draft = state.categoryDraft || { name: editing?.name||'', emoji: editing?.emoji||'📦', color: editing?.color||'lavender' };
+  state.categoryDraft = draft;
+  const EMOJI_OPTIONS = ['🥛','🥫','🍪','🧴','📦','🍞','🥩','🧃','🍫','🧹','🧊','🍎','🧂','☕','🍝'];
+  const valid = draft.name.trim();
 
-  return (
-    <Sheet title={category ? 'Editar categoría' : 'Nueva categoría'} onClose={onClose}>
-      <div className="field">
-        <label>Nombre</label>
-        <input autoFocus placeholder="Ej: Bebidas" value={name} onChange={e=>setName(e.target.value)} />
+  return renderSheetWrapper(editing ? 'Editar categoría' : 'Nueva categoría', `
+    <div class="field">
+      <label>Nombre</label>
+      <input id="cf-name" placeholder="Ej: Bebidas" value="${esc(draft.name)}" autofocus />
+    </div>
+    <div class="field">
+      <label>Ícono</label>
+      <div class="seg">
+        ${EMOJI_OPTIONS.map(em => `<button type="button" class="seg-btn ${draft.emoji===em?'active':''}" style="font-size:17px; padding:8px 12px;" data-cf-emoji="${em}">${em}</button>`).join('')}
       </div>
-      <div className="field">
-        <label>Ícono</label>
-        <div className="seg">
-          {EMOJI_OPTIONS.map(em => (
-            <button key={em} type="button" className={`seg-btn ${emoji===em?'active':''}`} style={{fontSize:17, padding:'8px 12px'}} onClick={() => setEmoji(em)}>{em}</button>
-          ))}
-        </div>
+    </div>
+    <div class="field">
+      <label>Color</label>
+      <div class="seg">
+        ${Object.keys(COLOR_MAP).map(c => `<button type="button" class="seg-btn ${draft.color===c?'active':''}" data-cf-color="${c}" style="background:${draft.color===c?COLOR_MAP[c].deep:COLOR_MAP[c].bg}; color:${draft.color===c?'#fff':'var(--text)'}">${c}</button>`).join('')}
       </div>
-      <div className="field">
-        <label>Color</label>
-        <div className="seg">
-          {Object.keys(COLOR_MAP).map(c => (
-            <button key={c} type="button" className={`seg-btn ${color===c?'active':''}`} onClick={() => setColor(c)}
-              style={{ background: color===c ? COLOR_MAP[c].deep : COLOR_MAP[c].bg, color: color===c?'#fff':'var(--text)' }}>
-              {c}
-            </button>
-          ))}
-        </div>
-      </div>
-      <button className="btn btn-primary btn-block" disabled={!valid} style={{opacity:valid?1:0.5}}
-        onClick={() => onSave({ name: name.trim(), emoji, color })}>
-        Guardar categoría
-      </button>
-    </Sheet>
-  );
+    </div>
+    <button class="btn btn-primary btn-block" id="cf-save" ${valid?'':'disabled'} style="opacity:${valid?1:0.5}">Guardar categoría</button>
+  `);
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+function renderSheet(){
+  if(!state.sheet) return '';
+  if(state.sheet.type === 'productForm') return renderProductFormSheet();
+  if(state.sheet.type === 'productDetail') return renderProductDetailSheet();
+  if(state.sheet.type === 'categoryForm') return renderCategoryFormSheet();
+  return '';
+}
+
+// ---------- Master render ----------
+function render(){
+  const root = document.getElementById('root');
+  const contentRenderers = { home: renderHome, inventory: renderInventory, reports: renderReports, categories: renderCategories };
+
+  root.innerHTML = `
+    <div class="blob blob1"></div>
+    <div class="blob blob2"></div>
+    <div class="blob blob3"></div>
+    <div class="blob blob4"></div>
+    <div class="app">
+      ${renderTopbar()}
+      <div class="content">${contentRenderers[state.tab]()}</div>
+      <button class="fab" id="fab-add">+</button>
+      ${renderTabBar()}
+    </div>
+    ${renderSheet()}
+    ${state.toastMsg ? `<div class="toast">${esc(state.toastMsg)}</div>` : ''}
+  `;
+
+  attachEvents();
+}
+
+// ---------- Event delegation ----------
+function attachEvents(){
+  const root = document.getElementById('root');
+
+  // Tab bar
+  root.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => setState({ tab: btn.dataset.tab }));
+  });
+
+  // Topbar import/export
+  const fileInput = document.getElementById('file-input');
+  const btnImport = document.getElementById('btn-import');
+  const btnExport = document.getElementById('btn-export');
+  if(btnImport) btnImport.addEventListener('click', () => fileInput.click());
+  if(btnExport) btnExport.addEventListener('click', exportJSON);
+  if(fileInput) fileInput.addEventListener('change', (e) => {
+    if(e.target.files[0]) importJSON(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  // FAB
+  const fab = document.getElementById('fab-add');
+  if(fab) fab.addEventListener('click', () => {
+    state.productDraft = null;
+    setState({ sheet: { type:'productForm', payload:null } });
+  });
+
+  // Open product cards
+  root.querySelectorAll('[data-open-product]').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.openProduct;
+      const product = state.data.products.find(p => p.id === id);
+      if(product){ state.detailMode = 'view'; setState({ sheet:{ type:'productDetail', payload:product } }); }
+    });
+  });
+
+  // ---- Inventory tab ----
+  const searchInput = document.getElementById('search-input');
+  if(searchInput){
+    searchInput.addEventListener('input', (e) => {
+      state.inventoryFilters.query = e.target.value;
+      render();
+      // restore focus + cursor position
+      const ni = document.getElementById('search-input');
+      if(ni){ ni.focus(); ni.setSelectionRange(ni.value.length, ni.value.length); }
+    });
+  }
+  const clearSearch = document.getElementById('clear-search');
+  if(clearSearch) clearSearch.addEventListener('click', () => { state.inventoryFilters.query=''; render(); });
+
+  root.querySelectorAll('[data-status]').forEach(el => {
+    el.addEventListener('click', () => { state.inventoryFilters.status = el.dataset.status; render(); });
+  });
+  const filterLoc = document.getElementById('filter-loc');
+  if(filterLoc) filterLoc.addEventListener('change', (e) => { state.inventoryFilters.loc = e.target.value; render(); });
+  const filterCat = document.getElementById('filter-cat');
+  if(filterCat) filterCat.addEventListener('change', (e) => { state.inventoryFilters.cat = e.target.value; render(); });
+
+  // ---- Reports tab ----
+  root.querySelectorAll('[data-period]').forEach(el => {
+    el.addEventListener('click', () => { state.reportPeriod = Number(el.dataset.period); render(); });
+  });
+
+  // ---- Categories tab ----
+  const addCatBtn = document.getElementById('btn-add-category');
+  if(addCatBtn) addCatBtn.addEventListener('click', () => { state.categoryDraft = null; setState({ sheet:{ type:'categoryForm', payload:null } }); });
+  root.querySelectorAll('[data-edit-cat]').forEach(el => {
+    el.addEventListener('click', () => {
+      const cat = state.data.categories.find(c => c.id === el.dataset.editCat);
+      state.categoryDraft = null;
+      setState({ sheet:{ type:'categoryForm', payload:cat } });
+    });
+  });
+  root.querySelectorAll('[data-delete-cat]').forEach(el => {
+    el.addEventListener('click', () => {
+      const cat = state.data.categories.find(c => c.id === el.dataset.deleteCat);
+      if(confirm(`¿Eliminar la categoría "${cat.name}"?`)) deleteCategory(cat.id);
+    });
+  });
+
+  // ---- Sheet: close ----
+  const overlay = document.getElementById('sheet-overlay');
+  if(overlay) overlay.addEventListener('click', (e) => { if(e.target === overlay) closeSheet(); });
+  const sheetClose = document.getElementById('sheet-close');
+  if(sheetClose) sheetClose.addEventListener('click', closeSheet);
+
+  // ---- Product form sheet ----
+  const pfName = document.getElementById('pf-name');
+  if(pfName){
+    pfName.addEventListener('input', (e) => { state.productDraft.name = e.target.value; renderInPlace('pf-name'); });
+    root.querySelectorAll('[data-pf-cat]').forEach(el => el.addEventListener('click', () => { state.productDraft.categoryId = el.dataset.pfCat; render(); }));
+    root.querySelectorAll('[data-pf-loc]').forEach(el => el.addEventListener('click', () => { state.productDraft.locationId = el.dataset.pfLoc; render(); }));
+    document.getElementById('pf-qty').addEventListener('input', (e) => { state.productDraft.qty = Number(e.target.value)||0; renderInPlace('pf-qty'); });
+    document.getElementById('pf-unit').addEventListener('input', (e) => { state.productDraft.unit = e.target.value; renderInPlace('pf-unit'); });
+    document.getElementById('pf-expiry').addEventListener('input', (e) => { state.productDraft.expiry = e.target.value; render(); });
+    document.getElementById('pf-alert').addEventListener('input', (e) => { state.productDraft.alertDays = Number(e.target.value)||0; renderInPlace('pf-alert'); });
+    const pfSave = document.getElementById('pf-save');
+    if(pfSave) pfSave.addEventListener('click', () => {
+      const d = state.productDraft;
+      if(!d.name.trim() || !d.expiry || d.qty <= 0) return;
+      const product = {
+        id: uid(), name: d.name.trim(), categoryId: d.categoryId, locationId: d.locationId,
+        unit: d.unit.trim()||'un.', alertDays: Number(d.alertDays),
+        lots: [{ id: uid(), qty: Number(d.qty), expiry: d.expiry }],
+      };
+      addProduct(product);
+      state.productDraft = null;
+      closeSheet();
+      showToast(`${product.name} agregado ✅`);
+    });
+  }
+
+  // ---- Product detail sheet ----
+  const pdAlert = document.getElementById('pd-alert');
+  if(pdAlert) pdAlert.addEventListener('blur', (e) => {
+    updateProduct(e.target.dataset.product, { alertDays: Number(e.target.value)||0 });
+  });
+  const pdAddLot = document.getElementById('pd-add-lot');
+  if(pdAddLot) pdAddLot.addEventListener('click', () => { state.detailMode='addLot'; state.lotDraft=null; render(); });
+  const pdConsume = document.getElementById('pd-consume');
+  if(pdConsume) pdConsume.addEventListener('click', () => {
+    state.detailMode='consume';
+    state.consumeDraft = { lotId: null, amount: 1 };
+    render();
+  });
+  const pdDelete = document.getElementById('pd-delete');
+  if(pdDelete) pdDelete.addEventListener('click', () => {
+    const product = state.data.products.find(p => p.id === state.sheet.payload.id);
+    if(product && confirm(`¿Eliminar "${product.name}" y todos sus lotes?`)){
+      deleteProduct(product.id);
+      closeSheet();
+      showToast('Producto eliminado');
+    }
+  });
+
+  // ---- Add lot sheet ----
+  const alMinus = document.getElementById('al-minus');
+  if(alMinus) alMinus.addEventListener('click', () => { state.lotDraft.qty = Math.max(1, state.lotDraft.qty-1); render(); });
+  const alPlus = document.getElementById('al-plus');
+  if(alPlus) alPlus.addEventListener('click', () => { state.lotDraft.qty = state.lotDraft.qty+1; render(); });
+  const alQty = document.getElementById('al-qty');
+  if(alQty) alQty.addEventListener('input', (e) => { state.lotDraft.qty = Number(e.target.value)||1; renderInPlace('al-qty'); });
+  const alExpiry = document.getElementById('al-expiry');
+  if(alExpiry) alExpiry.addEventListener('input', (e) => { state.lotDraft.expiry = e.target.value; render(); });
+  const alSave = document.getElementById('al-save');
+  if(alSave) alSave.addEventListener('click', () => {
+    const d = state.lotDraft;
+    if(d.qty<=0 || !d.expiry) return;
+    const productId = state.sheet.payload.id;
+    addLot(productId, { id: uid(), qty: Number(d.qty), expiry: d.expiry });
+    state.lotDraft = null;
+    state.detailMode = 'view';
+    const product = state.data.products.find(p => p.id === productId);
+    state.sheet = { type:'productDetail', payload: product };
+    render();
+    showToast('Lote agregado ✅');
+  });
+
+  // ---- Consume sheet ----
+  root.querySelectorAll('[data-pick-lot]').forEach(el => {
+    el.addEventListener('click', () => { state.consumeDraft.lotId = el.dataset.pickLot; state.consumeDraft.amount = 1; render(); });
+  });
+  const csMinus = document.getElementById('cs-minus');
+  if(csMinus) csMinus.addEventListener('click', () => { state.consumeDraft.amount = Math.max(1, state.consumeDraft.amount-1); render(); });
+  const csPlus = document.getElementById('cs-plus');
+  if(csPlus) csPlus.addEventListener('click', () => { state.consumeDraft.amount = state.consumeDraft.amount+1; render(); });
+  const csAmount = document.getElementById('cs-amount');
+  if(csAmount) csAmount.addEventListener('input', (e) => { state.consumeDraft.amount = Number(e.target.value)||1; renderInPlace('cs-amount'); });
+  const csConfirm = document.getElementById('cs-confirm');
+  if(csConfirm) csConfirm.addEventListener('click', () => {
+    const lotId = csConfirm.dataset.lot;
+    if(!lotId) return;
+    const productId = state.sheet.payload.id;
+    consumeLot(productId, lotId, state.consumeDraft.amount);
+    state.detailMode = 'view';
+    state.consumeDraft = { lotId:null, amount:1 };
+    const product = state.data.products.find(p => p.id === productId);
+    if(product){ state.sheet = { type:'productDetail', payload: product }; }
+    else { state.sheet = null; }
+    render();
+    showToast('Stock descontado ✅');
+  });
+
+  // ---- Category form sheet ----
+  const cfName = document.getElementById('cf-name');
+  if(cfName){
+    cfName.addEventListener('input', (e) => { state.categoryDraft.name = e.target.value; renderInPlace('cf-name'); });
+    root.querySelectorAll('[data-cf-emoji]').forEach(el => el.addEventListener('click', () => { state.categoryDraft.emoji = el.dataset.cfEmoji; render(); }));
+    root.querySelectorAll('[data-cf-color]').forEach(el => el.addEventListener('click', () => { state.categoryDraft.color = el.dataset.cfColor; render(); }));
+    const cfSave = document.getElementById('cf-save');
+    if(cfSave) cfSave.addEventListener('click', () => {
+      const d = state.categoryDraft;
+      if(!d.name.trim()) return;
+      const editing = state.sheet.payload;
+      if(editing) updateCategory(editing.id, { name:d.name.trim(), emoji:d.emoji, color:d.color });
+      else addCategory({ id: uid(), name:d.name.trim(), emoji:d.emoji, color:d.color });
+      state.categoryDraft = null;
+      closeSheet();
+    });
+  }
+}
+
+// Helper: re-render but keep focus on a specific text input (avoids losing focus while typing)
+function renderInPlace(focusId){
+  const el = document.getElementById(focusId);
+  const cursorPos = el ? el.selectionStart : null;
+  render();
+  const newEl = document.getElementById(focusId);
+  if(newEl && cursorPos !== null){
+    newEl.focus();
+    try{ newEl.setSelectionRange(cursorPos, cursorPos); }catch(e){}
+  }
+}
+
+function closeSheet(){
+  state.sheet = null;
+  state.detailMode = 'view';
+  state.productDraft = null;
+  state.categoryDraft = null;
+  state.lotDraft = null;
+  render();
+}
+
+// ---------- Boot ----------
+render();
+
 </script>
 </body>
 </html>
