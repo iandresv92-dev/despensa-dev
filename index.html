@@ -306,6 +306,7 @@
 <body>
 <div id="root"></div>
 <script>
+
 'use strict';
 
 // ---------- Helpers ----------
@@ -466,11 +467,18 @@ function importJSON(file){
 function getAllLots(){
   const out = [];
   state.data.products.forEach(p => {
+    if(p.tracksExpiry === false) return; // productos sin vencimiento no generan lotes
     (p.lots || []).forEach(l => {
       if(l.qty > 0) out.push({ ...l, product: p, status: lotStatus(l, p.alertDays ?? 3) });
     });
   });
   return out;
+}
+
+function getLowStockProducts(){
+  return state.data.products.filter(p =>
+    p.tracksExpiry === false && p.lowStockAlert && (p.qty ?? 0) <= (p.lowStockThreshold ?? 0)
+  );
 }
 
 // ---------- Render: Topbar ----------
@@ -535,12 +543,28 @@ function renderLotRow(lot){
   `;
 }
 
+function renderLowStockRow(product){
+  return `
+    <div class="glass lot-card" style="--accent:var(--peach-deep)" data-open-product="${product.id}">
+      <div class="lot-info">
+        <p class="lot-name">${esc(product.name)}</p>
+        <div class="lot-meta">
+          <span>Quedan ${product.qty} ${esc(product.unit||'un.')}</span>
+          <span class="dot"></span><span>Mínimo configurado: ${product.lowStockThreshold}</span>
+        </div>
+      </div>
+      <span class="lot-badge" style="background:var(--peach-deep)">Stock bajo</span>
+    </div>
+  `;
+}
+
 // ---------- Render: Home Tab ----------
 function renderHome(){
   const allLots = getAllLots();
   const warningLots = allLots.filter(l => l.status === 'warning').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
   const expiredLots = allLots.filter(l => l.status === 'expired').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
   const okCount = allLots.filter(l => l.status === 'ok').length;
+  const lowStockProducts = getLowStockProducts();
 
   let html = `
     <div class="stats-row">
@@ -561,6 +585,12 @@ function renderHome(){
   } else {
     html += warningLots.map(renderLotRow).join('');
   }
+
+  if(lowStockProducts.length > 0){
+    html += `<div class="section-title">Quedan pocos</div>`;
+    html += lowStockProducts.map(renderLowStockRow).join('');
+  }
+
   return html;
 }
 
@@ -571,6 +601,11 @@ function renderInventory(){
   const categories = state.data.categories;
 
   const enriched = products.map(p => {
+    if(p.tracksExpiry === false){
+      const total = p.qty ?? 0;
+      const isLowStock = p.lowStockAlert && total <= (p.lowStockThreshold ?? 0);
+      return { ...p, total, nextLot: null, worstStatus: isLowStock ? 'warning' : 'ok', lotsCount: 0, isLowStock, noExpiry: true };
+    }
     const lots = (p.lots||[]).filter(l => l.qty > 0);
     const total = lots.reduce((s,l) => s + l.qty, 0);
     const sorted = [...lots].sort((a,b) => daysBetween(a.expiry) - daysBetween(b.expiry));
@@ -580,7 +615,7 @@ function renderInventory(){
       const rank = { ok:0, warning:1, expired:2 };
       return rank[s] > rank[worst] ? s : worst;
     }, 'ok');
-    return { ...p, total, nextLot, worstStatus, lotsCount: lots.length };
+    return { ...p, total, nextLot, worstStatus, lotsCount: lots.length, noExpiry: false };
   });
 
   const filtered = enriched.filter(p => {
@@ -625,19 +660,20 @@ function renderInventory(){
       const cat = categories.find(c => c.id === p.categoryId);
       const loc = LOCATIONS.find(l => l.id === p.locationId);
       const color = COLOR_MAP[cat?.color || 'lavender'];
+      const metaText = p.noExpiry
+        ? `${loc?.emoji||''} ${esc(loc?.label||'')} · Sin vencimiento`
+        : `${loc?.emoji||''} ${esc(loc?.label||'')} · ${p.lotsCount} lote${p.lotsCount===1?'':'s'}${p.nextLot ? ` · vence ${fmtDate(p.nextLot.expiry)}` : ''}`;
+      const badgeLabel = p.noExpiry ? 'Stock bajo' : STATUS_LABEL[p.worstStatus];
       return `
         <div class="glass product-card" data-open-product="${p.id}">
           <div class="product-emoji" style="--chip-bg:${color.bg}">${cat?.emoji || '📦'}</div>
           <div style="flex:1; min-width:0;">
             <p class="product-name">${esc(p.name)}</p>
-            <div class="product-meta">
-              ${loc?.emoji||''} ${esc(loc?.label||'')} · ${p.lotsCount} lote${p.lotsCount===1?'':'s'}
-              ${p.nextLot ? ` · vence ${fmtDate(p.nextLot.expiry)}` : ''}
-            </div>
+            <div class="product-meta">${metaText}</div>
           </div>
           <div class="product-right">
             <div class="product-total">${p.total} <span style="font-size:11px; font-weight:500; color:var(--text-soft);">${esc(p.unit||'un.')}</span></div>
-            ${p.worstStatus !== 'ok' ? `<span class="lot-badge" style="background:${COLOR_MAP[STATUS_COLOR[p.worstStatus]].deep}; font-size:9.5px; padding:2px 7px;">${STATUS_LABEL[p.worstStatus]}</span>` : ''}
+            ${p.worstStatus !== 'ok' ? `<span class="lot-badge" style="background:${COLOR_MAP[STATUS_COLOR[p.worstStatus]].deep}; font-size:9.5px; padding:2px 7px;">${badgeLabel}</span>` : ''}
           </div>
         </div>
       `;
@@ -732,9 +768,13 @@ function renderSheetWrapper(title, innerHtml, extraClass){
 
 function renderProductFormSheet(){
   const categories = state.data.categories;
-  const draft = state.productDraft || { name:'', categoryId: categories[0]?.id||'', locationId:'despensa', unit:'un.', qty:1, expiry:'', alertDays:3 };
+  const draft = state.productDraft || {
+    name:'', categoryId: categories[0]?.id||'', locationId:'despensa', unit:'un.',
+    qty:1, expiry:'', alertDays:3,
+    tracksExpiry: true,
+    lowStockAlert: false, lowStockThreshold: 2,
+  };
   state.productDraft = draft;
-  const valid = draft.name.trim() && draft.expiry && draft.qty > 0;
 
   return renderSheetWrapper('Nuevo producto', `
     <div class="field">
@@ -753,6 +793,15 @@ function renderProductFormSheet(){
         ${LOCATIONS.map(l => `<button type="button" class="seg-btn ${draft.locationId===l.id?'active':''}" data-pf-loc="${l.id}">${l.emoji} ${l.label}</button>`).join('')}
       </div>
     </div>
+
+    <div class="field">
+      <label>¿Este producto vence?</label>
+      <div class="seg">
+        <button type="button" class="seg-btn ${draft.tracksExpiry?'active':''}" data-pf-tracks="true">📅 Sí, tiene vencimiento</button>
+        <button type="button" class="seg-btn ${!draft.tracksExpiry?'active':''}" data-pf-tracks="false">♾️ No vence</button>
+      </div>
+    </div>
+
     <div style="display:flex; gap:10px;">
       <div class="field" style="flex:1;">
         <label>Cantidad inicial</label>
@@ -763,32 +812,54 @@ function renderProductFormSheet(){
         <input id="pf-unit" placeholder="un. / kg / L" value="${esc(draft.unit)}" />
       </div>
     </div>
-    <div class="field">
-      <label>Fecha de vencimiento (de este lote)</label>
-      <input type="date" id="pf-expiry" value="${draft.expiry}" />
-    </div>
-    <div class="field">
-      <label>Avisarme con cuántos días de anticipación</label>
-      <input type="number" min="0" id="pf-alert" value="${draft.alertDays}" />
-    </div>
-    <button class="btn btn-primary btn-block" id="pf-save" ${valid?'':'disabled'} style="opacity:${valid?1:0.5}">Guardar producto</button>
+
+    ${draft.tracksExpiry ? `
+      <div class="field">
+        <label>Fecha de vencimiento (de este lote)</label>
+        <input type="date" id="pf-expiry" value="${draft.expiry}" />
+      </div>
+      <div class="field">
+        <label>Avisarme con cuántos días de anticipación</label>
+        <input type="number" min="0" id="pf-alert" value="${draft.alertDays}" />
+      </div>
+    ` : `
+      <div class="field">
+        <label style="display:flex; align-items:center; justify-content:space-between;">
+          <span>Avisarme cuando quede poco stock</span>
+          <button type="button" id="pf-lowstock-toggle" class="seg-btn ${draft.lowStockAlert?'active':''}" style="padding:6px 12px; font-size:12px;">${draft.lowStockAlert?'Activado':'Desactivado'}</button>
+        </label>
+      </div>
+      ${draft.lowStockAlert ? `
+        <div class="field">
+          <label>Avisar cuando queden ${draft.lowStockThreshold} ${esc(draft.unit)} o menos</label>
+          <input type="number" min="0" id="pf-lowstock-threshold" value="${draft.lowStockThreshold}" />
+        </div>
+      ` : ''}
+    `}
+
+    <button class="btn btn-primary btn-block" id="pf-save">Guardar producto</button>
   `);
 }
 
 function renderProductDetailSheet(){
   const product = state.data.products.find(p => p.id === state.sheet.payload.id);
   if(!product){ state.sheet = null; return ''; }
-  const mode = state.detailMode || 'view';
   const categories = state.data.categories;
   const cat = categories.find(c => c.id === product.categoryId);
   const loc = LOCATIONS.find(l => l.id === product.locationId);
+
+  // ---- Productos SIN vencimiento: vista simplificada de solo cantidad ----
+  if(product.tracksExpiry === false){
+    return renderNoExpiryDetailSheet(product, cat, loc);
+  }
+
+  const mode = state.detailMode || 'view';
   const activeLots = (product.lots||[]).filter(l => l.qty > 0).sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
   const total = activeLots.reduce((s,l)=>s+l.qty,0);
 
   if(mode === 'addLot'){
     const draft = state.lotDraft || { qty:1, expiry:'' };
     state.lotDraft = draft;
-    const valid = draft.qty > 0 && draft.expiry;
     return renderSheetWrapper(`Agregar stock · ${esc(product.name)}`, `
       <div class="field">
         <label>Cantidad</label>
@@ -803,7 +874,7 @@ function renderProductDetailSheet(){
         <label>Fecha de vencimiento de este lote</label>
         <input type="date" id="al-expiry" value="${draft.expiry}" autofocus />
       </div>
-      <button class="btn btn-primary btn-block" id="al-save" ${valid?'':'disabled'} style="opacity:${valid?1:0.5}">Agregar lote</button>
+      <button class="btn btn-primary btn-block" id="al-save">Agregar lote</button>
     `);
   }
 
@@ -899,12 +970,51 @@ function renderProductDetailSheet(){
   `);
 }
 
+// ---- Vista de detalle para productos SIN vencimiento (solo cantidad) ----
+function renderNoExpiryDetailSheet(product, cat, loc){
+  const qty = product.qty ?? 0;
+  const isLowStock = product.lowStockAlert && qty <= (product.lowStockThreshold ?? 0);
+
+  return renderSheetWrapper(esc(product.name), `
+    <div style="display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;">
+      <span class="lot-badge" style="background:var(--lavender-deep);">${cat?.emoji||''} ${esc(cat?.name||'')}</span>
+      <span class="lot-badge" style="background:var(--sky-deep);">${loc?.emoji||''} ${esc(loc?.label||'')}</span>
+      <span class="lot-badge" style="background:var(--text-faint);">♾️ Sin vencimiento</span>
+    </div>
+
+    <div class="glass" style="padding:22px; text-align:center; margin-bottom:18px;">
+      <div style="font-size:13px; color:var(--text-soft); font-weight:600; margin-bottom:10px;">Cantidad actual</div>
+      <div class="stepper" style="justify-content:center;">
+        <button id="ne-minus" style="width:46px; height:46px; font-size:22px;">−</button>
+        <input type="number" id="ne-qty" value="${qty}" min="0" style="width:80px; font-size:22px;" />
+        <button id="ne-plus" style="width:46px; height:46px; font-size:22px;">+</button>
+      </div>
+      <div style="font-size:13px; color:var(--text-soft); margin-top:8px;">${esc(product.unit||'un.')}</div>
+      ${isLowStock ? `<div style="margin-top:12px;"><span class="lot-badge" style="background:var(--peach-deep);">Stock bajo</span></div>` : ''}
+    </div>
+
+    <div class="field">
+      <label style="display:flex; align-items:center; justify-content:space-between;">
+        <span>Avisarme cuando quede poco stock</span>
+        <button type="button" id="ne-lowstock-toggle" class="seg-btn ${product.lowStockAlert?'active':''}" style="padding:6px 12px; font-size:12px;">${product.lowStockAlert?'Activado':'Desactivado'}</button>
+      </label>
+    </div>
+    ${product.lowStockAlert ? `
+      <div class="field">
+        <label>Avisar cuando queden esta cantidad o menos</label>
+        <input type="number" min="0" id="ne-threshold" value="${product.lowStockThreshold ?? 0}" data-product="${product.id}" />
+      </div>
+    ` : ''}
+
+    <button class="btn btn-danger-soft btn-block" style="margin-top:16px;" id="pd-delete">Eliminar producto</button>
+  `);
+}
+
 function renderCategoryFormSheet(){
   const editing = state.sheet.payload;
   const draft = state.categoryDraft || { name: editing?.name||'', emoji: editing?.emoji||'📦', color: editing?.color||'lavender' };
   state.categoryDraft = draft;
   const EMOJI_OPTIONS = ['🥛','🥫','🍪','🧴','📦','🍞','🥩','🧃','🍫','🧹','🧊','🍎','🧂','☕','🍝'];
-  const valid = draft.name.trim();
 
   return renderSheetWrapper(editing ? 'Editar categoría' : 'Nueva categoría', `
     <div class="field">
@@ -923,7 +1033,7 @@ function renderCategoryFormSheet(){
         ${Object.keys(COLOR_MAP).map(c => `<button type="button" class="seg-btn ${draft.color===c?'active':''}" data-cf-color="${c}" style="background:${draft.color===c?COLOR_MAP[c].deep:COLOR_MAP[c].bg}; color:${draft.color===c?'#fff':'var(--text)'}">${c}</button>`).join('')}
       </div>
     </div>
-    <button class="btn btn-primary btn-block" id="cf-save" ${valid?'':'disabled'} style="opacity:${valid?1:0.5}">Guardar categoría</button>
+    <button class="btn btn-primary btn-block" id="cf-save">Guardar categoría</button>
   `);
 }
 
@@ -1047,22 +1157,61 @@ function attachEvents(){
   // ---- Product form sheet ----
   const pfName = document.getElementById('pf-name');
   if(pfName){
-    pfName.addEventListener('input', (e) => { state.productDraft.name = e.target.value; renderInPlace('pf-name'); });
+    // Campos de texto/número: solo actualizan el estado en memoria, SIN re-renderizar.
+    // Re-renderizar en cada tecla le quita el foco al input y cierra el teclado en iOS.
+    pfName.addEventListener('input', (e) => { state.productDraft.name = e.target.value; });
+
     root.querySelectorAll('[data-pf-cat]').forEach(el => el.addEventListener('click', () => { state.productDraft.categoryId = el.dataset.pfCat; render(); }));
     root.querySelectorAll('[data-pf-loc]').forEach(el => el.addEventListener('click', () => { state.productDraft.locationId = el.dataset.pfLoc; render(); }));
-    document.getElementById('pf-qty').addEventListener('input', (e) => { state.productDraft.qty = Number(e.target.value)||0; renderInPlace('pf-qty'); });
-    document.getElementById('pf-unit').addEventListener('input', (e) => { state.productDraft.unit = e.target.value; renderInPlace('pf-unit'); });
-    document.getElementById('pf-expiry').addEventListener('input', (e) => { state.productDraft.expiry = e.target.value; render(); });
-    document.getElementById('pf-alert').addEventListener('input', (e) => { state.productDraft.alertDays = Number(e.target.value)||0; renderInPlace('pf-alert'); });
+
+    root.querySelectorAll('[data-pf-tracks]').forEach(el => el.addEventListener('click', () => {
+      state.productDraft.tracksExpiry = el.dataset.pfTracks === 'true';
+      render();
+    }));
+
+    const pfQty = document.getElementById('pf-qty');
+    if(pfQty) pfQty.addEventListener('input', (e) => { state.productDraft.qty = Number(e.target.value)||0; });
+
+    const pfUnit = document.getElementById('pf-unit');
+    if(pfUnit) pfUnit.addEventListener('input', (e) => { state.productDraft.unit = e.target.value; });
+
+    const pfExpiry = document.getElementById('pf-expiry');
+    if(pfExpiry) pfExpiry.addEventListener('input', (e) => { state.productDraft.expiry = e.target.value; });
+
+    const pfAlert = document.getElementById('pf-alert');
+    if(pfAlert) pfAlert.addEventListener('input', (e) => { state.productDraft.alertDays = Number(e.target.value)||0; });
+
+    const pfLowstockToggle = document.getElementById('pf-lowstock-toggle');
+    if(pfLowstockToggle) pfLowstockToggle.addEventListener('click', () => {
+      state.productDraft.lowStockAlert = !state.productDraft.lowStockAlert;
+      render();
+    });
+
+    const pfLowstockThreshold = document.getElementById('pf-lowstock-threshold');
+    if(pfLowstockThreshold) pfLowstockThreshold.addEventListener('input', (e) => { state.productDraft.lowStockThreshold = Number(e.target.value)||0; });
+
     const pfSave = document.getElementById('pf-save');
     if(pfSave) pfSave.addEventListener('click', () => {
       const d = state.productDraft;
-      if(!d.name.trim() || !d.expiry || d.qty <= 0) return;
+      if(!d.name.trim()){ showToast('Ponle un nombre al producto ⚠️'); return; }
+      if(d.qty <= 0){ showToast('La cantidad debe ser mayor a 0 ⚠️'); return; }
+      if(d.tracksExpiry && !d.expiry){ showToast('Falta la fecha de vencimiento ⚠️'); return; }
+
       const product = {
         id: uid(), name: d.name.trim(), categoryId: d.categoryId, locationId: d.locationId,
-        unit: d.unit.trim()||'un.', alertDays: Number(d.alertDays),
-        lots: [{ id: uid(), qty: Number(d.qty), expiry: d.expiry }],
+        unit: d.unit.trim()||'un.',
+        tracksExpiry: d.tracksExpiry,
       };
+
+      if(d.tracksExpiry){
+        product.alertDays = Number(d.alertDays);
+        product.lots = [{ id: uid(), qty: Number(d.qty), expiry: d.expiry }];
+      } else {
+        product.qty = Number(d.qty);
+        product.lowStockAlert = !!d.lowStockAlert;
+        product.lowStockThreshold = Number(d.lowStockThreshold)||0;
+      }
+
       addProduct(product);
       state.productDraft = null;
       closeSheet();
@@ -1093,19 +1242,58 @@ function attachEvents(){
     }
   });
 
+  // ---- Product detail sheet: producto SIN vencimiento ----
+  const neQty = document.getElementById('ne-qty');
+  if(neQty){
+    const productId = state.sheet.payload.id;
+    const applyQty = (newQty) => {
+      newQty = Math.max(0, newQty);
+      updateProduct(productId, { qty: newQty });
+      const product = state.data.products.find(p => p.id === productId);
+      state.sheet = { type:'productDetail', payload: product };
+      render();
+    };
+    const neMinus = document.getElementById('ne-minus');
+    if(neMinus) neMinus.addEventListener('click', () => {
+      const product = state.data.products.find(p => p.id === productId);
+      applyQty((product.qty ?? 0) - 1);
+    });
+    const nePlus = document.getElementById('ne-plus');
+    if(nePlus) nePlus.addEventListener('click', () => {
+      const product = state.data.products.find(p => p.id === productId);
+      applyQty((product.qty ?? 0) + 1);
+    });
+    neQty.addEventListener('change', (e) => { applyQty(Number(e.target.value)||0); });
+
+    const neLowstockToggle = document.getElementById('ne-lowstock-toggle');
+    if(neLowstockToggle) neLowstockToggle.addEventListener('click', () => {
+      const product = state.data.products.find(p => p.id === productId);
+      updateProduct(productId, { lowStockAlert: !product.lowStockAlert, lowStockThreshold: product.lowStockThreshold ?? 2 });
+      const updated = state.data.products.find(p => p.id === productId);
+      state.sheet = { type:'productDetail', payload: updated };
+      render();
+    });
+
+    const neThreshold = document.getElementById('ne-threshold');
+    if(neThreshold) neThreshold.addEventListener('blur', (e) => {
+      updateProduct(e.target.dataset.product, { lowStockThreshold: Number(e.target.value)||0 });
+    });
+  }
+
   // ---- Add lot sheet ----
   const alMinus = document.getElementById('al-minus');
   if(alMinus) alMinus.addEventListener('click', () => { state.lotDraft.qty = Math.max(1, state.lotDraft.qty-1); render(); });
   const alPlus = document.getElementById('al-plus');
   if(alPlus) alPlus.addEventListener('click', () => { state.lotDraft.qty = state.lotDraft.qty+1; render(); });
   const alQty = document.getElementById('al-qty');
-  if(alQty) alQty.addEventListener('input', (e) => { state.lotDraft.qty = Number(e.target.value)||1; renderInPlace('al-qty'); });
+  if(alQty) alQty.addEventListener('input', (e) => { state.lotDraft.qty = Number(e.target.value)||1; });
   const alExpiry = document.getElementById('al-expiry');
   if(alExpiry) alExpiry.addEventListener('input', (e) => { state.lotDraft.expiry = e.target.value; render(); });
   const alSave = document.getElementById('al-save');
   if(alSave) alSave.addEventListener('click', () => {
     const d = state.lotDraft;
-    if(d.qty<=0 || !d.expiry) return;
+    if(d.qty<=0){ showToast('La cantidad debe ser mayor a 0 ⚠️'); return; }
+    if(!d.expiry){ showToast('Falta la fecha de vencimiento ⚠️'); return; }
     const productId = state.sheet.payload.id;
     addLot(productId, { id: uid(), qty: Number(d.qty), expiry: d.expiry });
     state.lotDraft = null;
@@ -1125,7 +1313,7 @@ function attachEvents(){
   const csPlus = document.getElementById('cs-plus');
   if(csPlus) csPlus.addEventListener('click', () => { state.consumeDraft.amount = state.consumeDraft.amount+1; render(); });
   const csAmount = document.getElementById('cs-amount');
-  if(csAmount) csAmount.addEventListener('input', (e) => { state.consumeDraft.amount = Number(e.target.value)||1; renderInPlace('cs-amount'); });
+  if(csAmount) csAmount.addEventListener('input', (e) => { state.consumeDraft.amount = Number(e.target.value)||1; });
   const csConfirm = document.getElementById('cs-confirm');
   if(csConfirm) csConfirm.addEventListener('click', () => {
     const lotId = csConfirm.dataset.lot;
@@ -1144,13 +1332,13 @@ function attachEvents(){
   // ---- Category form sheet ----
   const cfName = document.getElementById('cf-name');
   if(cfName){
-    cfName.addEventListener('input', (e) => { state.categoryDraft.name = e.target.value; renderInPlace('cf-name'); });
+    cfName.addEventListener('input', (e) => { state.categoryDraft.name = e.target.value; });
     root.querySelectorAll('[data-cf-emoji]').forEach(el => el.addEventListener('click', () => { state.categoryDraft.emoji = el.dataset.cfEmoji; render(); }));
     root.querySelectorAll('[data-cf-color]').forEach(el => el.addEventListener('click', () => { state.categoryDraft.color = el.dataset.cfColor; render(); }));
     const cfSave = document.getElementById('cf-save');
     if(cfSave) cfSave.addEventListener('click', () => {
       const d = state.categoryDraft;
-      if(!d.name.trim()) return;
+      if(!d.name.trim()){ showToast('Ponle un nombre a la categoría ⚠️'); return; }
       const editing = state.sheet.payload;
       if(editing) updateCategory(editing.id, { name:d.name.trim(), emoji:d.emoji, color:d.color });
       else addCategory({ id: uid(), name:d.name.trim(), emoji:d.emoji, color:d.color });
@@ -1183,6 +1371,7 @@ function closeSheet(){
 
 // ---------- Boot ----------
 render();
+
 
 </script>
 </body>
