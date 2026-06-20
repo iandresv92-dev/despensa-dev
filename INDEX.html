@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="translucent-black" />
+<title>Despensa</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root{
+    --bg: #F2F1F7;
+    --surface: rgba(255,255,255,0.55);
+    --surface-strong: rgba(255,255,255,0.78);
+    --border: rgba(255,255,255,0.6);
+    --text: #2D2A3D;
+    --text-soft: #6E6A85;
+    --text-faint: #9D99B3;
+    --lavender: #C9C2F0;
+    --lavender-deep: #9B8FE0;
+    --mint: #A8E6CF;
+    --mint-deep: #4FB88C;
+    --peach: #FFD3A5;
+    --peach-deep: #E8923F;
+    --coral: #FF9AA2;
+    --coral-deep: #E8525C;
+    --sky: #A8D8EA;
+    --sky-deep: #4F9AC0;
+    --shadow: 0 8px 32px rgba(110, 100, 150, 0.14);
+    --shadow-soft: 0 4px 16px rgba(110, 100, 150, 0.10);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  #root{min-height:100vh; position:relative;}
+
+  .blob{
+    position:fixed;
+    border-radius:50%;
+    filter: blur(60px);
+    opacity:0.55;
+    z-index:0;
+    pointer-events:none;
+  }
+  .blob1{ width:280px; height:280px; background: var(--lavender); top:-80px; left:-60px; }
+  .blob2{ width:240px; height:240px; background: var(--mint); top:200px; right:-90px; }
+  .blob3{ width:260px; height:260px; background: var(--peach); bottom:60px; left:-100px; }
+  .blob4{ width:200px; height:200px; background: var(--sky); bottom:-60px; right:-40px; }
+
+  .app{ position:relative; z-index:1; max-width:520px; margin:0 auto; min-height:100vh; padding-bottom:96px; }
+
+  .topbar{
+    position:sticky; top:0; z-index:20;
+    padding: max(18px, env(safe-area-inset-top)) 20px 14px;
+    background: rgba(242,241,247,0.72);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border-bottom: 1px solid rgba(255,255,255,0.5);
+  }
+  .topbar h1{ font-size:26px; font-weight:700; margin:0; letter-spacing:-0.02em; }
+  .topbar .sub{ font-size:13px; color:var(--text-soft); margin-top:2px; }
+
+  .content{ padding: 18px 16px 8px; }
+
+  .glass{
+    background: var(--surface);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    box-shadow: var(--shadow-soft);
+  }
+  .glass-strong{
+    background: var(--surface-strong);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.7);
+    border-radius: 26px;
+    box-shadow: var(--shadow);
+  }
+
+  /* Dashboard stat cards */
+  .stats-row{ display:flex; gap:10px; margin-bottom:16px; }
+  .stat-card{
+    flex:1; padding:14px 12px; text-align:left;
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .stat-num{ font-size:28px; font-weight:700; letter-spacing:-0.02em; font-variant-numeric: tabular-nums; }
+  .stat-label{ font-size:11.5px; color:var(--text-soft); font-weight:500; }
+  .stat-card.coral .stat-num{ color: var(--coral-deep); }
+  .stat-card.peach .stat-num{ color: var(--peach-deep); }
+  .stat-card.mint .stat-num{ color: var(--mint-deep); }
+
+  .section-title{
+    font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em;
+    color: var(--text-faint); margin: 22px 4px 10px;
+  }
+  .section-title.first{ margin-top:4px; }
+
+  /* Lot / product cards */
+  .lot-card{
+    position:relative;
+    padding:14px 16px 14px 18px;
+    margin-bottom:10px;
+    display:flex; align-items:center; gap:12px;
+    overflow:hidden;
+  }
+  .lot-card::before{
+    content:''; position:absolute; left:0; top:0; bottom:0; width:5px;
+    background: var(--accent, var(--mint-deep));
+  }
+  .lot-info{ flex:1; min-width:0; }
+  .lot-name{ font-size:16px; font-weight:600; margin:0 0 2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lot-meta{ font-size:12.5px; color:var(--text-soft); display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .lot-meta .dot{ width:3px; height:3px; border-radius:50%; background:var(--text-faint); }
+  .lot-badge{
+    font-size:11px; font-weight:700; padding:4px 9px; border-radius:99px;
+    color:#fff; white-space:nowrap;
+  }
+  .lot-qty{ font-size:13px; color:var(--text-soft); font-weight:600; font-variant-numeric: tabular-nums; }
+  .progress-track{ height:4px; background:rgba(0,0,0,0.06); border-radius:99px; margin-top:8px; overflow:hidden; }
+  .progress-fill{ height:100%; border-radius:99px; background: var(--accent, var(--mint-deep)); }
+
+  .product-card{
+    padding:14px 16px;
+    margin-bottom:10px;
+    display:flex; align-items:center; gap:12px;
+    cursor:pointer;
+  }
+  .product-card:active{ transform: scale(0.985); }
+  .product-emoji{
+    width:42px; height:42px; border-radius:14px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:20px; flex-shrink:0;
+    background: var(--chip-bg, var(--lavender));
+  }
+  .product-name{ font-size:15.5px; font-weight:600; margin:0 0 2px; }
+  .product-meta{ font-size:12.5px; color:var(--text-soft); }
+  .product-right{ text-align:right; flex-shrink:0; }
+  .product-total{ font-size:15px; font-weight:700; font-variant-numeric: tabular-nums; }
+  .chev{ color: var(--text-faint); font-size:18px; margin-left:2px; }
+
+  /* Buttons */
+  .btn{
+    border:none; cursor:pointer; font-family:inherit;
+    font-size:15px; font-weight:600; border-radius:16px;
+    padding:13px 18px; display:flex; align-items:center; justify-content:center; gap:8px;
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+  .btn:active{ transform: scale(0.97); }
+  .btn-primary{ background: linear-gradient(135deg, var(--lavender-deep), var(--lavender)); color:#fff; box-shadow: 0 6px 16px rgba(155,143,224,0.4); }
+  .btn-soft{ background: var(--surface-strong); color: var(--text); border:1px solid var(--border); }
+  .btn-danger-soft{ background: rgba(255,154,162,0.25); color: var(--coral-deep); border:1px solid rgba(255,154,162,0.4); }
+  .btn-block{ width:100%; }
+  .btn-sm{ padding:9px 14px; font-size:13.5px; border-radius:12px; }
+
+  .fab{
+    position:fixed; right:20px; bottom:96px; z-index:30;
+    width:58px; height:58px; border-radius:50%;
+    background: linear-gradient(135deg, var(--lavender-deep), #B6A8F0);
+    color:#fff; font-size:28px; font-weight:400;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow: 0 10px 24px rgba(155,143,224,0.5);
+    border:none; cursor:pointer;
+  }
+  .fab:active{ transform: scale(0.93); }
+
+  /* Tab bar */
+  .tabbar{
+    position:fixed; bottom:0; left:0; right:0; z-index:25;
+    display:flex; justify-content:center;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tabbar-inner{
+    width:100%; max-width:520px; display:flex;
+    background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border-top: 1px solid rgba(255,255,255,0.6);
+    padding: 8px 6px max(8px, env(safe-area-inset-bottom)) 6px;
+  }
+  .tab-btn{
+    flex:1; background:none; border:none; cursor:pointer; font-family:inherit;
+    display:flex; flex-direction:column; align-items:center; gap:3px;
+    padding:7px 2px 5px; color: var(--text-faint); font-size:10.5px; font-weight:600;
+    border-radius:14px;
+  }
+  .tab-btn.active{ color: var(--lavender-deep); }
+  .tab-icon{ font-size:21px; line-height:1; }
+
+  /* Inputs */
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:12.5px; font-weight:600; color:var(--text-soft); margin-bottom:6px; }
+  .field input, .field select, .field textarea{
+    width:100%; font-family:inherit; font-size:15.5px; color:var(--text);
+    padding:12px 14px; border-radius:14px;
+    border:1px solid rgba(0,0,0,0.08);
+    background: rgba(255,255,255,0.75);
+    outline:none;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus{
+    border-color: var(--lavender-deep);
+    box-shadow: 0 0 0 3px rgba(155,143,224,0.18);
+  }
+  .seg{ display:flex; gap:8px; flex-wrap:wrap; }
+  .seg-btn{
+    padding:9px 14px; border-radius:13px; font-size:13.5px; font-weight:600;
+    border:1px solid rgba(0,0,0,0.08); background:rgba(255,255,255,0.6); color:var(--text-soft);
+    cursor:pointer; font-family:inherit;
+  }
+  .seg-btn.active{ background: var(--lavender-deep); color:#fff; border-color:var(--lavender-deep); }
+
+  /* Modal / sheet */
+  .overlay{
+    position:fixed; inset:0; z-index:50;
+    background: rgba(45,42,61,0.35);
+    backdrop-filter: blur(2px);
+    display:flex; align-items:flex-end; justify-content:center;
+    animation: fadeIn 0.18s ease;
+  }
+  @keyframes fadeIn{ from{opacity:0} to{opacity:1} }
+  .sheet{
+    width:100%; max-width:520px; max-height:88vh; overflow-y:auto;
+    background: rgba(248,247,252,0.92);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border-radius: 28px 28px 0 0;
+    padding: 10px 20px max(20px, env(safe-area-inset-bottom));
+    border-top:1px solid rgba(255,255,255,0.7);
+    animation: slideUp 0.22s cubic-bezier(.25,.8,.25,1);
+  }
+  @keyframes slideUp{ from{transform:translateY(40px); opacity:0.6} to{transform:translateY(0); opacity:1} }
+  .sheet-handle{ width:38px; height:4px; border-radius:99px; background:rgba(0,0,0,0.15); margin: 6px auto 14px; }
+  .sheet-title{ font-size:19px; font-weight:700; margin:0 0 16px; }
+
+  .empty-state{ text-align:center; padding: 50px 24px; color: var(--text-faint); }
+  .empty-state .emoji{ font-size:40px; margin-bottom:10px; }
+  .empty-state p{ font-size:14px; margin:0; line-height:1.5; }
+
+  .search-bar{
+    display:flex; align-items:center; gap:8px;
+    padding:11px 14px; margin-bottom:14px;
+  }
+  .search-bar input{
+    flex:1; border:none; background:none; outline:none; font-size:15px; font-family:inherit; color:var(--text);
+  }
+  .filter-row{ display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:14px; scrollbar-width:none; }
+  .filter-row::-webkit-scrollbar{ display:none; }
+  .filter-chip{
+    flex-shrink:0; padding:8px 14px; border-radius:99px; font-size:12.5px; font-weight:600;
+    background: rgba(255,255,255,0.6); border:1px solid rgba(0,0,0,0.06); color:var(--text-soft);
+    cursor:pointer; white-space:nowrap;
+  }
+  .filter-chip.active{ background: var(--text); color:#fff; }
+
+  .toast{
+    position:fixed; bottom:170px; left:50%; transform:translateX(-50%); z-index:60;
+    background: rgba(45,42,61,0.92); color:#fff; padding:12px 20px; border-radius:14px;
+    font-size:14px; font-weight:500; box-shadow:0 8px 24px rgba(0,0,0,0.25);
+    animation: toastIn 0.25s ease;
+    max-width: 85%; text-align:center;
+  }
+  @keyframes toastIn{ from{opacity:0; transform:translate(-50%,10px)} to{opacity:1; transform:translate(-50%,0)} }
+
+  .row-between{ display:flex; align-items:center; justify-content:space-between; }
+  .icon-btn{
+    background:rgba(0,0,0,0.05); border:none; width:34px; height:34px; border-radius:11px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:15px; color:var(--text-soft);
+  }
+  .cat-pill{
+    display:inline-flex; align-items:center; gap:6px; padding:10px 14px; border-radius:16px;
+    margin-bottom:8px; width:100%;
+  }
+  .lot-pick{
+    width:100%; text-align:left; padding:14px; border-radius:16px; margin-bottom:10px;
+    border:1.5px solid rgba(0,0,0,0.07); background:rgba(255,255,255,0.6); cursor:pointer; font-family:inherit;
+  }
+  .lot-pick.suggested{ border-color: var(--lavender-deep); background: rgba(201,194,240,0.18); }
+  .lot-pick .lp-top{ display:flex; justify-content:space-between; align-items:center; }
+  .lot-pick .lp-name{ font-weight:700; font-size:14.5px; }
+  .lot-pick .lp-sub{ font-size:12px; color:var(--text-soft); margin-top:3px; }
+  .tag-suggest{ font-size:10px; font-weight:700; color:var(--lavender-deep); background:rgba(201,194,240,0.3); padding:2px 8px; border-radius:99px; }
+
+  .stepper{ display:flex; align-items:center; gap:14px; }
+  .stepper button{
+    width:40px; height:40px; border-radius:13px; border:none; background:rgba(0,0,0,0.06);
+    font-size:19px; font-weight:600; color:var(--text); cursor:pointer;
+  }
+  .stepper input{ width:60px; text-align:center; font-size:18px; font-weight:700; padding:10px 4px; }
+
+  .report-row{ display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid rgba(0,0,0,0.05); }
+  .report-row:last-child{ border-bottom:none; }
+  .report-rank{ width:22px; font-size:12px; font-weight:700; color:var(--text-faint); }
+  .report-bar-bg{ height:6px; background:rgba(0,0,0,0.06); border-radius:99px; margin-top:5px; overflow:hidden; }
+  .report-bar-fill{ height:100%; background: linear-gradient(90deg, var(--lavender-deep), var(--sky-deep)); border-radius:99px; }
+
+  ::-webkit-scrollbar{ width:0; height:0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ---------- Helpers ----------
+const STORAGE_KEY = 'despensa_v1';
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+
+const todayISO = () => new Date().toISOString().slice(0,10);
+const daysBetween = (dateStr) => {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(dateStr + 'T00:00:00');
+  return Math.round((target - today) / 86400000);
+};
+const fmtDate = (dateStr) => {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('es-CL', { day:'2-digit', month:'short' });
+};
+
+const LOCATIONS = [
+  { id:'despensa', label:'Despensa', emoji:'🗄️' },
+  { id:'refrigerador', label:'Refrigerador', emoji:'❄️' },
+  { id:'congelador', label:'Congelador', emoji:'🧊' },
+];
+
+const DEFAULT_CATEGORIES = [
+  { id:'lacteos', name:'Lácteos', emoji:'🥛', color:'sky' },
+  { id:'enlatados', name:'Enlatados', emoji:'🥫', color:'peach' },
+  { id:'snacks', name:'Snacks', emoji:'🍪', color:'lavender' },
+  { id:'limpieza', name:'Limpieza', emoji:'🧴', color:'mint' },
+  { id:'otros', name:'Otros', emoji:'📦', color:'lavender' },
+];
+
+const COLOR_MAP = {
+  lavender: { bg:'var(--lavender)', deep:'var(--lavender-deep)' },
+  mint: { bg:'var(--mint)', deep:'var(--mint-deep)' },
+  peach: { bg:'var(--peach)', deep:'var(--peach-deep)' },
+  sky: { bg:'var(--sky)', deep:'var(--sky-deep)' },
+  coral: { bg:'var(--coral)', deep:'var(--coral-deep)' },
+};
+
+function loadData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  return {
+    products: [],
+    categories: DEFAULT_CATEGORIES,
+    consumption: [],
+  };
+}
+function saveData(data){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+// Status of a lot based on its expiry + product's alert window
+function lotStatus(lot, alertDays){
+  const d = daysBetween(lot.expiry);
+  if(d < 0) return 'expired';
+  if(d <= alertDays) return 'warning';
+  return 'ok';
+}
+const STATUS_COLOR = { ok:'mint', warning:'peach', expired:'coral' };
+const STATUS_LABEL = { ok:'Vigente', warning:'Por vencer', expired:'Vencido' };
+
+// ---------- Toast ----------
+function useToast(){
+  const [toast, setToast] = useState(null);
+  const show = (msg) => {
+    setToast(msg);
+    clearTimeout(show._t);
+    show._t = setTimeout(() => setToast(null), 2200);
+  };
+  return [toast, show];
+}
+
+// ---------- Main App ----------
+function App(){
+  const [data, setData] = useState(loadData());
+  const [tab, setTab] = useState('home');
+  const [toast, showToast] = useToast();
+  const [sheet, setSheet] = useState(null); // {type, payload}
+  const fileInputRef = useRef(null);
+
+  useEffect(() => { saveData(data); }, [data]);
+
+  const products = data.products;
+  const categories = data.categories;
+
+  // derived: all active lots flattened with product info
+  const allLots = useMemo(() => {
+    const out = [];
+    products.forEach(p => {
+      (p.lots || []).forEach(l => {
+        if(l.qty > 0){
+          out.push({ ...l, product: p, status: lotStatus(l, p.alertDays ?? 3) });
+        }
+      });
+    });
+    return out;
+  }, [products]);
+
+  const warningLots = allLots.filter(l => l.status === 'warning').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
+  const expiredLots = allLots.filter(l => l.status === 'expired').sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
+  const okCount = allLots.filter(l => l.status === 'ok').length;
+
+  // ---- CRUD operations ----
+  function addProduct(prod){
+    setData(d => ({ ...d, products: [...d.products, prod] }));
+  }
+  function updateProduct(id, patch){
+    setData(d => ({ ...d, products: d.products.map(p => p.id === id ? { ...p, ...patch } : p) }));
+  }
+  function deleteProduct(id){
+    setData(d => ({ ...d, products: d.products.filter(p => p.id !== id) }));
+  }
+  function addLot(productId, lot){
+    setData(d => ({
+      ...d,
+      products: d.products.map(p => p.id === productId ? { ...p, lots: [...(p.lots||[]), lot] } : p)
+    }));
+  }
+  function consumeLot(productId, lotId, amount){
+    setData(d => {
+      const products = d.products.map(p => {
+        if(p.id !== productId) return p;
+        const lots = p.lots.map(l => l.id === lotId ? { ...l, qty: Math.max(0, l.qty - amount) } : l);
+        return { ...p, lots };
+      });
+      const product = products.find(p => p.id === productId);
+      const lot = product.lots.find(l => l.id === lotId);
+      const record = {
+        id: uid(),
+        productId, productName: product.name,
+        lotId, expiry: lot.expiry,
+        amount, date: new Date().toISOString(),
+      };
+      return { ...d, products, consumption: [record, ...d.consumption] };
+    });
+  }
+  function addCategory(cat){
+    setData(d => ({ ...d, categories: [...d.categories, cat] }));
+  }
+  function updateCategory(id, patch){
+    setData(d => ({ ...d, categories: d.categories.map(c => c.id === id ? { ...c, ...patch } : c) }));
+  }
+  function deleteCategory(id){
+    setData(d => ({ ...d, categories: d.categories.filter(c => c.id !== id) }));
+  }
+
+  function exportJSON(){
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `despensa-backup-${todayISO()}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Inventario exportado ✅');
+  }
+  function importJSON(file){
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try{
+        const parsed = JSON.parse(e.target.result);
+        if(!parsed.products || !parsed.categories) throw new Error('formato inválido');
+        setData({ products: parsed.products, categories: parsed.categories, consumption: parsed.consumption || [] });
+        showToast('Inventario importado ✅');
+      }catch(err){
+        showToast('No se pudo leer el archivo ⚠️');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  return (
+    <div className="app">
+      <div className="blob blob1"></div>
+      <div className="blob blob2"></div>
+      <div className="blob blob3"></div>
+      <div className="blob blob4"></div>
+
+      <Topbar tab={tab} onImport={() => fileInputRef.current.click()} onExport={exportJSON} />
+      <input type="file" accept="application/json" ref={fileInputRef} style={{display:'none'}}
+        onChange={e => { if(e.target.files[0]) importJSON(e.target.files[0]); e.target.value=''; }} />
+
+      <div className="content">
+        {tab === 'home' && (
+          <HomeTab
+            okCount={okCount} warningLots={warningLots} expiredLots={expiredLots}
+            categories={categories}
+            onOpenProduct={(p) => setSheet({ type:'productDetail', payload:p })}
+          />
+        )}
+        {tab === 'inventory' && (
+          <InventoryTab
+            products={products} categories={categories}
+            onOpenProduct={(p) => setSheet({ type:'productDetail', payload:p })}
+          />
+        )}
+        {tab === 'reports' && (
+          <ReportsTab consumption={data.consumption} />
+        )}
+        {tab === 'categories' && (
+          <CategoriesTab
+            categories={categories}
+            onAdd={() => setSheet({ type:'categoryForm', payload:null })}
+            onEdit={(c) => setSheet({ type:'categoryForm', payload:c })}
+            onDelete={deleteCategory}
+          />
+        )}
+      </div>
+
+      <button className="fab" onClick={() => setSheet({ type:'productForm', payload:null })}>+</button>
+
+      <TabBar tab={tab} setTab={setTab} />
+
+      {sheet && (
+        <SheetRouter
+          sheet={sheet} setSheet={setSheet}
+          categories={categories} products={products}
+          addProduct={addProduct} updateProduct={updateProduct} deleteProduct={deleteProduct}
+          addLot={addLot} consumeLot={consumeLot}
+          addCategory={addCategory} updateCategory={updateCategory}
+          showToast={showToast}
+        />
+      )}
+
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+function Topbar({ tab, onImport, onExport }){
+  const titles = { home:'Mi Despensa', inventory:'Inventario', reports:'Reportes', categories:'Categorías' };
+  return (
+    <div className="topbar">
+      <div className="row-between">
+        <div>
+          <h1>{titles[tab]}</h1>
+          <div className="sub">{new Date().toLocaleDateString('es-CL', { weekday:'long', day:'numeric', month:'long' })}</div>
+        </div>
+        <div style={{display:'flex', gap:8}}>
+          <button className="icon-btn" onClick={onImport} title="Importar">⬇️</button>
+          <button className="icon-btn" onClick={onExport} title="Exportar">⬆️</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabBar({ tab, setTab }){
+  const items = [
+    { id:'home', icon:'🏠', label:'Inicio' },
+    { id:'inventory', icon:'🧺', label:'Inventario' },
+    { id:'reports', icon:'📊', label:'Reportes' },
+    { id:'categories', icon:'🏷️', label:'Categorías' },
+  ];
+  return (
+    <div className="tabbar">
+      <div className="tabbar-inner glass-strong" style={{borderRadius:'24px 24px 0 0'}}>
+        {items.map(it => (
+          <button key={it.id} className={`tab-btn ${tab===it.id?'active':''}`} onClick={() => setTab(it.id)}>
+            <span className="tab-icon">{it.icon}</span>
+            <span>{it.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Home Tab ----------
+function HomeTab({ okCount, warningLots, expiredLots, categories, onOpenProduct }){
+  return (
+    <div>
+      <div className="stats-row">
+        <div className="glass stat-card mint">
+          <div className="stat-num">{okCount}</div>
+          <div className="stat-label">Vigentes</div>
+        </div>
+        <div className="glass stat-card peach">
+          <div className="stat-num">{warningLots.length}</div>
+          <div className="stat-label">Por vencer</div>
+        </div>
+        <div className="glass stat-card coral">
+          <div className="stat-num">{expiredLots.length}</div>
+          <div className="stat-label">Vencidos</div>
+        </div>
+      </div>
+
+      {expiredLots.length > 0 && (
+        <>
+          <div className="section-title first">Vencidos</div>
+          {expiredLots.map(l => <LotRow key={l.id} lot={l} onClick={() => onOpenProduct(l.product)} />)}
+        </>
+      )}
+
+      <div className="section-title" style={{marginTop: expiredLots.length ? 22 : 4}}>Por vencer pronto</div>
+      {warningLots.length === 0 ? (
+        <div className="glass empty-state">
+          <div className="emoji">✨</div>
+          <p>Nada por vencer en los próximos días.<br/>Tu despensa está bajo control.</p>
+        </div>
+      ) : (
+        warningLots.map(l => <LotRow key={l.id} lot={l} onClick={() => onOpenProduct(l.product)} />)
+      )}
+    </div>
+  );
+}
+
+function LotRow({ lot, onClick }){
+  const color = COLOR_MAP[STATUS_COLOR[lot.status]];
+  const d = daysBetween(lot.expiry);
+  const dayLabel = d < 0 ? `Venció hace ${Math.abs(d)} día${Math.abs(d)===1?'':'s'}` : d === 0 ? 'Vence hoy' : `Vence en ${d} día${d===1?'':'s'}`;
+  return (
+    <div className="glass lot-card" style={{ '--accent': color.deep }} onClick={onClick}>
+      <div className="lot-info">
+        <p className="lot-name">{lot.product.name}</p>
+        <div className="lot-meta">
+          <span>{dayLabel}</span>
+          <span className="dot"></span>
+          <span>{fmtDate(lot.expiry)}</span>
+          <span className="dot"></span>
+          <span>{lot.qty} {lot.product.unit || 'un.'}</span>
+        </div>
+      </div>
+      <span className="lot-badge" style={{ background: color.deep }}>{STATUS_LABEL[lot.status]}</span>
+    </div>
+  );
+}
+
+// ---------- Inventory Tab ----------
+function InventoryTab({ products, categories, onOpenProduct }){
+  const [query, setQuery] = useState('');
+  const [filterCat, setFilterCat] = useState('all');
+  const [filterLoc, setFilterLoc] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+
+  const enriched = useMemo(() => products.map(p => {
+    const lots = (p.lots||[]).filter(l => l.qty > 0);
+    const total = lots.reduce((s,l) => s + l.qty, 0);
+    const sorted = [...lots].sort((a,b) => daysBetween(a.expiry) - daysBetween(b.expiry));
+    const nextLot = sorted[0] || null;
+    const worstStatus = lots.reduce((worst, l) => {
+      const s = lotStatus(l, p.alertDays ?? 3);
+      const rank = { ok:0, warning:1, expired:2 };
+      return rank[s] > rank[worst] ? s : worst;
+    }, 'ok');
+    return { ...p, total, nextLot, worstStatus, lotsCount: lots.length };
+  }), [products]);
+
+  const filtered = enriched.filter(p => {
+    if(query && !p.name.toLowerCase().includes(query.toLowerCase())) return false;
+    if(filterCat !== 'all' && p.categoryId !== filterCat) return false;
+    if(filterLoc !== 'all' && p.locationId !== filterLoc) return false;
+    if(filterStatus !== 'all'){
+      if(filterStatus === 'empty' && p.total > 0) return false;
+      if(filterStatus !== 'empty' && p.worstStatus !== filterStatus) return false;
+    }
+    return true;
+  });
+
+  // suggestions for autocomplete-ish search feedback
+  const suggestions = query && filtered.length === 0
+    ? products.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0,3)
+    : [];
+
+  return (
+    <div>
+      <div className="glass search-bar">
+        <span style={{fontSize:16}}>🔍</span>
+        <input placeholder="Buscar producto..." value={query} onChange={e => setQuery(e.target.value)} />
+        {query && <button className="icon-btn" style={{width:26,height:26}} onClick={() => setQuery('')}>✕</button>}
+      </div>
+
+      <div className="filter-row">
+        <Chip active={filterStatus==='all'} onClick={() => setFilterStatus('all')}>Todos</Chip>
+        <Chip active={filterStatus==='warning'} onClick={() => setFilterStatus('warning')}>Por vencer</Chip>
+        <Chip active={filterStatus==='expired'} onClick={() => setFilterStatus('expired')}>Vencidos</Chip>
+        <Chip active={filterLoc!=='all'} onClick={() => {}} dropdown>
+          <select value={filterLoc} onChange={e=>setFilterLoc(e.target.value)} style={{background:'none', border:'none', color:'inherit', fontWeight:600, fontSize:12.5, fontFamily:'inherit'}}>
+            <option value="all">📍 Lugar</option>
+            {LOCATIONS.map(l => <option key={l.id} value={l.id}>{l.emoji} {l.label}</option>)}
+          </select>
+        </Chip>
+        <Chip active={filterCat!=='all'} onClick={() => {}} dropdown>
+          <select value={filterCat} onChange={e=>setFilterCat(e.target.value)} style={{background:'none', border:'none', color:'inherit', fontWeight:600, fontSize:12.5, fontFamily:'inherit'}}>
+            <option value="all">🏷️ Categoría</option>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
+          </select>
+        </Chip>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="glass empty-state">
+          <div className="emoji">🔎</div>
+          <p>{products.length === 0 ? 'Aún no agregas productos.\nToca el botón + para empezar.' : 'No encontramos productos con ese filtro.'}</p>
+        </div>
+      ) : (
+        filtered.map(p => {
+          const cat = categories.find(c => c.id === p.categoryId);
+          const loc = LOCATIONS.find(l => l.id === p.locationId);
+          const color = COLOR_MAP[cat?.color || 'lavender'];
+          return (
+            <div key={p.id} className="glass product-card" onClick={() => onOpenProduct(p)}>
+              <div className="product-emoji" style={{ '--chip-bg': color.bg }}>{cat?.emoji || '📦'}</div>
+              <div style={{flex:1, minWidth:0}}>
+                <p className="product-name">{p.name}</p>
+                <div className="product-meta">
+                  {loc?.emoji} {loc?.label} · {p.lotsCount} lote{p.lotsCount===1?'':'s'}
+                  {p.nextLot && ` · vence ${fmtDate(p.nextLot.expiry)}`}
+                </div>
+              </div>
+              <div className="product-right">
+                <div className="product-total">{p.total} <span style={{fontSize:11, fontWeight:500, color:'var(--text-soft)'}}>{p.unit||'un.'}</span></div>
+                {p.worstStatus !== 'ok' && (
+                  <span className="lot-badge" style={{ background: COLOR_MAP[STATUS_COLOR[p.worstStatus]].deep, fontSize:9.5, padding:'2px 7px' }}>
+                    {STATUS_LABEL[p.worstStatus]}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function Chip({ active, onClick, children, dropdown }){
+  return (
+    <div className={`filter-chip ${active?'active':''}`} onClick={dropdown ? undefined : onClick}>
+      {children}
+    </div>
+  );
+}
+
+// ---------- Reports Tab ----------
+function ReportsTab({ consumption }){
+  const [period, setPeriod] = useState(30);
+
+  const filtered = useMemo(() => {
+    const cutoff = Date.now() - period * 86400000;
+    return consumption.filter(c => new Date(c.date).getTime() >= cutoff);
+  }, [consumption, period]);
+
+  const grouped = useMemo(() => {
+    const map = {};
+    filtered.forEach(c => {
+      if(!map[c.productName]) map[c.productName] = { name: c.productName, total: 0, count: 0 };
+      map[c.productName].total += c.amount;
+      map[c.productName].count += 1;
+    });
+    return Object.values(map).sort((a,b) => b.total - a.total);
+  }, [filtered]);
+
+  const maxTotal = grouped[0]?.total || 1;
+
+  return (
+    <div>
+      <div className="glass" style={{padding:14, marginBottom:18}}>
+        <div className="section-title first" style={{marginTop:0, marginLeft:0}}>Periodo</div>
+        <div className="seg">
+          {[7,15,30,90].map(p => (
+            <button key={p} className={`seg-btn ${period===p?'active':''}`} onClick={() => setPeriod(p)}>
+              {p===90 ? '3 meses' : `${p} días`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {grouped.length === 0 ? (
+        <div className="glass empty-state">
+          <div className="emoji">📭</div>
+          <p>Sin consumo registrado en este periodo.<br/>Descuenta stock desde el detalle de un producto.</p>
+        </div>
+      ) : (
+        <div className="glass-strong" style={{padding:'8px 18px 18px'}}>
+          <div className="section-title first">Sugerido para reponer</div>
+          {grouped.map((g, i) => (
+            <div key={g.name} className="report-row">
+              <div style={{display:'flex', alignItems:'flex-start', gap:10, flex:1}}>
+                <span className="report-rank">{i+1}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600, fontSize:14.5}}>{g.name}</div>
+                  <div style={{fontSize:11.5, color:'var(--text-soft)'}}>{g.count} consumo{g.count===1?'':'s'} registrado{g.count===1?'':'s'}</div>
+                  <div className="report-bar-bg"><div className="report-bar-fill" style={{width:`${(g.total/maxTotal)*100}%`}}></div></div>
+                </div>
+              </div>
+              <div style={{fontWeight:700, fontSize:15, marginLeft:10, fontVariantNumeric:'tabular-nums'}}>{g.total}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Categories Tab ----------
+function CategoriesTab({ categories, onAdd, onEdit, onDelete }){
+  return (
+    <div>
+      {categories.map(c => {
+        const color = COLOR_MAP[c.color];
+        return (
+          <div key={c.id} className="glass cat-pill" style={{ justifyContent:'space-between' }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <div className="product-emoji" style={{width:34, height:34, fontSize:16, '--chip-bg': color.bg}}>{c.emoji}</div>
+              <span style={{fontWeight:600, fontSize:14.5}}>{c.name}</span>
+            </div>
+            <div style={{display:'flex', gap:6}}>
+              <button className="icon-btn" onClick={() => onEdit(c)}>✏️</button>
+              <button className="icon-btn" onClick={() => { if(confirm(`¿Eliminar la categoría "${c.name}"?`)) onDelete(c.id); }}>🗑️</button>
+            </div>
+          </div>
+        );
+      })}
+      <button className="btn btn-soft btn-block" style={{marginTop:10}} onClick={onAdd}>+ Nueva categoría</button>
+    </div>
+  );
+}
+
+// ---------- Sheet Router ----------
+function SheetRouter({ sheet, setSheet, categories, products, addProduct, updateProduct, deleteProduct, addLot, consumeLot, addCategory, updateCategory, showToast }){
+  const close = () => setSheet(null);
+
+  if(sheet.type === 'productForm'){
+    return <ProductFormSheet onClose={close} categories={categories}
+      onSave={(prod) => { addProduct(prod); close(); showToast(`${prod.name} agregado ✅`); }} />;
+  }
+  if(sheet.type === 'productDetail'){
+    const product = products.find(p => p.id === sheet.payload.id);
+    if(!product) { close(); return null; }
+    return (
+      <ProductDetailSheet
+        product={product} categories={categories}
+        onClose={close}
+        onAddLot={(lot) => { addLot(product.id, lot); showToast('Lote agregado ✅'); }}
+        onConsume={(lotId, amount) => { consumeLot(product.id, lotId, amount); showToast('Stock descontado ✅'); }}
+        onDelete={() => { if(confirm(`¿Eliminar "${product.name}" y todos sus lotes?`)){ deleteProduct(product.id); close(); showToast('Producto eliminado'); } }}
+        onEditAlert={(alertDays) => updateProduct(product.id, { alertDays })}
+      />
+    );
+  }
+  if(sheet.type === 'categoryForm'){
+    return (
+      <CategoryFormSheet
+        category={sheet.payload}
+        onClose={close}
+        onSave={(cat) => {
+          if(sheet.payload) updateCategory(sheet.payload.id, cat);
+          else addCategory({ id: uid(), ...cat });
+          close();
+        }}
+      />
+    );
+  }
+  return null;
+}
+
+function Sheet({ title, onClose, children }){
+  return (
+    <div className="overlay" onClick={(e) => { if(e.target === e.currentTarget) onClose(); }}>
+      <div className="sheet">
+        <div className="sheet-handle"></div>
+        <div className="row-between">
+          <h2 className="sheet-title">{title}</h2>
+          <button className="icon-btn" onClick={onClose}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Product Form (new product + first lot) ----------
+function ProductFormSheet({ onClose, onSave, categories }){
+  const [name, setName] = useState('');
+  const [categoryId, setCategoryId] = useState(categories[0]?.id || '');
+  const [locationId, setLocationId] = useState('despensa');
+  const [unit, setUnit] = useState('un.');
+  const [qty, setQty] = useState(1);
+  const [expiry, setExpiry] = useState('');
+  const [alertDays, setAlertDays] = useState(3);
+
+  const valid = name.trim() && expiry && qty > 0;
+
+  function handleSave(){
+    if(!valid) return;
+    const product = {
+      id: uid(),
+      name: name.trim(),
+      categoryId, locationId, unit: unit.trim() || 'un.',
+      alertDays: Number(alertDays),
+      lots: [{ id: uid(), qty: Number(qty), expiry }],
+    };
+    onSave(product);
+  }
+
+  return (
+    <Sheet title="Nuevo producto" onClose={onClose}>
+      <div className="field">
+        <label>Nombre del producto</label>
+        <input autoFocus placeholder="Ej: Leche Soprole 1L" value={name} onChange={e=>setName(e.target.value)} />
+      </div>
+
+      <div className="field">
+        <label>Categoría</label>
+        <div className="seg">
+          {categories.map(c => (
+            <button key={c.id} type="button" className={`seg-btn ${categoryId===c.id?'active':''}`} onClick={() => setCategoryId(c.id)}>
+              {c.emoji} {c.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
+        <label>Lugar</label>
+        <div className="seg">
+          {LOCATIONS.map(l => (
+            <button key={l.id} type="button" className={`seg-btn ${locationId===l.id?'active':''}`} onClick={() => setLocationId(l.id)}>
+              {l.emoji} {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{display:'flex', gap:10}}>
+        <div className="field" style={{flex:1}}>
+          <label>Cantidad inicial</label>
+          <input type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} />
+        </div>
+        <div className="field" style={{flex:1}}>
+          <label>Unidad</label>
+          <input placeholder="un. / kg / L" value={unit} onChange={e=>setUnit(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="field">
+        <label>Fecha de vencimiento (de este lote)</label>
+        <input type="date" value={expiry} onChange={e=>setExpiry(e.target.value)} />
+      </div>
+
+      <div className="field">
+        <label>Avisarme con cuántos días de anticipación</label>
+        <input type="number" min="0" value={alertDays} onChange={e=>setAlertDays(e.target.value)} />
+      </div>
+
+      <button className="btn btn-primary btn-block" disabled={!valid} style={{opacity: valid?1:0.5}} onClick={handleSave}>
+        Guardar producto
+      </button>
+    </Sheet>
+  );
+}
+
+// ---------- Product Detail (lots, add stock, consume, edit alert) ----------
+function ProductDetailSheet({ product, categories, onClose, onAddLot, onConsume, onDelete, onEditAlert }){
+  const [mode, setMode] = useState('view'); // view | addLot | consume
+  const cat = categories.find(c => c.id === product.categoryId);
+  const loc = LOCATIONS.find(l => l.id === product.locationId);
+  const activeLots = (product.lots||[]).filter(l => l.qty > 0).sort((a,b)=>daysBetween(a.expiry)-daysBetween(b.expiry));
+  const total = activeLots.reduce((s,l)=>s+l.qty,0);
+
+  if(mode === 'addLot'){
+    return <AddLotSheet product={product} onClose={() => setMode('view')}
+      onSave={(lot) => { onAddLot(lot); setMode('view'); }} />;
+  }
+  if(mode === 'consume'){
+    return <ConsumeSheet product={product} lots={activeLots} onClose={() => setMode('view')}
+      onConfirm={(lotId, amount) => { onConsume(lotId, amount); setMode('view'); }} />;
+  }
+
+  return (
+    <Sheet title={product.name} onClose={onClose}>
+      <div style={{display:'flex', gap:8, marginBottom:18, flexWrap:'wrap'}}>
+        <span className="lot-badge" style={{background:'var(--lavender-deep)'}}>{cat?.emoji} {cat?.name}</span>
+        <span className="lot-badge" style={{background:'var(--sky-deep)'}}>{loc?.emoji} {loc?.label}</span>
+        <span className="lot-badge" style={{background:'var(--text-faint)'}}>Total: {total} {product.unit}</span>
+      </div>
+
+      <div className="section-title first">Lotes activos</div>
+      {activeLots.length === 0 ? (
+        <div className="glass empty-state" style={{padding:30}}>
+          <div className="emoji">📦</div>
+          <p>Sin stock disponible.<br/>Agrega un lote nuevo.</p>
+        </div>
+      ) : (
+        activeLots.map(l => {
+          const status = lotStatus(l, product.alertDays ?? 3);
+          const color = COLOR_MAP[STATUS_COLOR[status]];
+          const d = daysBetween(l.expiry);
+          const dayLabel = d < 0 ? `Venció hace ${Math.abs(d)} d.` : d === 0 ? 'Vence hoy' : `${d} día${d===1?'':'s'} restantes`;
+          return (
+            <div key={l.id} className="glass lot-card" style={{ '--accent': color.deep }}>
+              <div className="lot-info">
+                <p className="lot-name">{fmtDate(l.expiry)}</p>
+                <div className="lot-meta"><span>{dayLabel}</span><span className="dot"></span><span>{l.qty} {product.unit}</span></div>
+              </div>
+              <span className="lot-badge" style={{background: color.deep}}>{STATUS_LABEL[status]}</span>
+            </div>
+          );
+        })
+      )}
+
+      <div className="field" style={{marginTop:20}}>
+        <label>Días de anticipación para avisar</label>
+        <input type="number" min="0" defaultValue={product.alertDays ?? 3}
+          onBlur={e => onEditAlert(Number(e.target.value))} />
+      </div>
+
+      <div style={{display:'flex', gap:10, marginTop:16}}>
+        <button className="btn btn-soft" style={{flex:1}} onClick={() => setMode('addLot')}>➕ Agregar stock</button>
+        <button className="btn btn-primary" style={{flex:1}} onClick={() => setMode('consume')} disabled={total===0} >➖ Descontar</button>
+      </div>
+      <button className="btn btn-danger-soft btn-block" style={{marginTop:10}} onClick={onDelete}>Eliminar producto</button>
+    </Sheet>
+  );
+}
+
+function AddLotSheet({ product, onClose, onSave }){
+  const [qty, setQty] = useState(1);
+  const [expiry, setExpiry] = useState('');
+  const valid = qty > 0 && expiry;
+  return (
+    <Sheet title={`Agregar stock · ${product.name}`} onClose={onClose}>
+      <div className="field">
+        <label>Cantidad</label>
+        <div className="stepper">
+          <button onClick={() => setQty(q => Math.max(1, q-1))}>−</button>
+          <input type="number" value={qty} onChange={e=>setQty(Number(e.target.value)||1)} />
+          <button onClick={() => setQty(q => q+1)}>+</button>
+          <span style={{color:'var(--text-soft)', fontWeight:600}}>{product.unit}</span>
+        </div>
+      </div>
+      <div className="field">
+        <label>Fecha de vencimiento de este lote</label>
+        <input type="date" autoFocus value={expiry} onChange={e=>setExpiry(e.target.value)} />
+      </div>
+      <button className="btn btn-primary btn-block" disabled={!valid} style={{opacity:valid?1:0.5}}
+        onClick={() => onSave({ id: uid(), qty: Number(qty), expiry })}>
+        Agregar lote
+      </button>
+    </Sheet>
+  );
+}
+
+function ConsumeSheet({ product, lots, onClose, onConfirm }){
+  const [selectedLot, setSelectedLot] = useState(lots[0]?.id || null);
+  const [amount, setAmount] = useState(1);
+
+  const current = lots.find(l => l.id === selectedLot);
+  const maxAmount = current?.qty || 1;
+
+  // single lot: skip picker
+  if(lots.length === 1){
+    const lot = lots[0];
+    return (
+      <Sheet title={`Descontar · ${product.name}`} onClose={onClose}>
+        <p style={{fontSize:13.5, color:'var(--text-soft)', marginTop:-8, marginBottom:16}}>
+          Lote único · vence {fmtDate(lot.expiry)} · disponible: {lot.qty} {product.unit}
+        </p>
+        <div className="field">
+          <label>Cantidad a descontar</label>
+          <div className="stepper">
+            <button onClick={() => setAmount(a => Math.max(1, a-1))}>−</button>
+            <input type="number" value={amount} min="1" max={lot.qty} onChange={e=>setAmount(Math.min(lot.qty, Math.max(1, Number(e.target.value)||1)))} />
+            <button onClick={() => setAmount(a => Math.min(lot.qty, a+1))}>+</button>
+            <span style={{color:'var(--text-soft)', fontWeight:600}}>{product.unit}</span>
+          </div>
+        </div>
+        <button className="btn btn-primary btn-block" onClick={() => onConfirm(lot.id, amount)}>Confirmar descuento</button>
+      </Sheet>
+    );
+  }
+
+  return (
+    <Sheet title={`Descontar · ${product.name}`} onClose={onClose}>
+      <p style={{fontSize:13.5, color:'var(--text-soft)', marginTop:-8, marginBottom:14}}>
+        Este producto tiene varios lotes. Elige de cuál estás descontando — sugerimos el que vence antes (FEFO).
+      </p>
+      {lots.map((l, i) => {
+        const d = daysBetween(l.expiry);
+        return (
+          <button key={l.id} className={`lot-pick ${selectedLot===l.id?'suggested':''}`} onClick={() => { setSelectedLot(l.id); setAmount(1); }}>
+            <div className="lp-top">
+              <span className="lp-name">{fmtDate(l.expiry)} {i===0 && <span className="tag-suggest">SUGERIDO</span>}</span>
+              <span style={{fontWeight:700}}>{l.qty} {product.unit}</span>
+            </div>
+            <div className="lp-sub">{d < 0 ? `Vencido hace ${Math.abs(d)} d.` : `Vence en ${d} día${d===1?'':'s'}`}</div>
+          </button>
+        );
+      })}
+
+      <div className="field" style={{marginTop:8}}>
+        <label>Cantidad a descontar</label>
+        <div className="stepper">
+          <button onClick={() => setAmount(a => Math.max(1, a-1))}>−</button>
+          <input type="number" value={amount} min="1" max={maxAmount} onChange={e=>setAmount(Math.min(maxAmount, Math.max(1, Number(e.target.value)||1)))} />
+          <button onClick={() => setAmount(a => Math.min(maxAmount, a+1))}>+</button>
+          <span style={{color:'var(--text-soft)', fontWeight:600}}>{product.unit}</span>
+        </div>
+      </div>
+
+      <button className="btn btn-primary btn-block" disabled={!selectedLot} onClick={() => onConfirm(selectedLot, amount)}>
+        Confirmar descuento
+      </button>
+    </Sheet>
+  );
+}
+
+// ---------- Category Form ----------
+const EMOJI_OPTIONS = ['🥛','🥫','🍪','🧴','📦','🍞','🥩','🧃','🍫','🧹','🧊','🍎','🧂','☕','🍝'];
+function CategoryFormSheet({ category, onClose, onSave }){
+  const [name, setName] = useState(category?.name || '');
+  const [emoji, setEmoji] = useState(category?.emoji || '📦');
+  const [color, setColor] = useState(category?.color || 'lavender');
+  const valid = name.trim();
+
+  return (
+    <Sheet title={category ? 'Editar categoría' : 'Nueva categoría'} onClose={onClose}>
+      <div className="field">
+        <label>Nombre</label>
+        <input autoFocus placeholder="Ej: Bebidas" value={name} onChange={e=>setName(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Ícono</label>
+        <div className="seg">
+          {EMOJI_OPTIONS.map(em => (
+            <button key={em} type="button" className={`seg-btn ${emoji===em?'active':''}`} style={{fontSize:17, padding:'8px 12px'}} onClick={() => setEmoji(em)}>{em}</button>
+          ))}
+        </div>
+      </div>
+      <div className="field">
+        <label>Color</label>
+        <div className="seg">
+          {Object.keys(COLOR_MAP).map(c => (
+            <button key={c} type="button" className={`seg-btn ${color===c?'active':''}`} onClick={() => setColor(c)}
+              style={{ background: color===c ? COLOR_MAP[c].deep : COLOR_MAP[c].bg, color: color===c?'#fff':'var(--text)' }}>
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+      <button className="btn btn-primary btn-block" disabled={!valid} style={{opacity:valid?1:0.5}}
+        onClick={() => onSave({ name: name.trim(), emoji, color })}>
+        Guardar categoría
+      </button>
+    </Sheet>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
